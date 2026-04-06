@@ -1,0 +1,16 @@
+.DS_Store
+*.xcuserstate
+xcuserdata/
+DerivedData/
+build/
+.build/
+.env
+*.ipa
+*.dSYM.zip
+*.dSYM
+*.hmap
+*.xcuserstate
+.swiftpm/
+Pods/
+*.xcodeproj/
+default.profraw

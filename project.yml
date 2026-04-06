@@ -1,0 +1,63 @@
+name: HDText
+options:
+  bundleIdPrefix: com.hdtext
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_IDENTITY: "-"
+    ENABLE_HARDENED_RUNTIME: NO
+
+packages:
+  GoogleGenerativeAI:
+    url: https://github.com/google-gemini/generative-ai-swift
+    from: "0.5.0"
+
+targets:
+  HDText:
+    type: application
+    platform: macOS
+    sources:
+      - path: HDText
+        excludes:
+          - "**/*.xcassets/*"
+    resources:
+      - path: HDText/Resources/Assets.xcassets
+    settings:
+      base:
+        INFOPLIST_FILE: HDText/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: HDText/Resources/HDText.entitlements
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+        PRODUCT_BUNDLE_IDENTIFIER: com.hdtext.app
+        PRODUCT_NAME: "HDText"
+        PRODUCT_MODULE_NAME: HDText
+        SWIFT_OBJC_BRIDGING_HEADER: HDText/BridgingHeader.h
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        COMBINE_HIDPI_IMAGES: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        LSUIElement: YES
+    dependencies:
+      - package: GoogleGenerativeAI
+    entitlements:
+      path: HDText/Resources/HDText.entitlements
+
+  HDTextTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: HDTextTests
+    dependencies:
+      - target: HDText
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/HDText.app/Contents/MacOS/HDText"
