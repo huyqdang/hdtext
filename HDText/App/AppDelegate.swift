@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastTapEndTime: Date?
     private var doubleTapTimer: Timer?
     private var lockExitTapTime: Date?
+    private var lockActivationReleasePending = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         menuBarController = MenuBarController(appState: appState)
@@ -112,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             error.pointee = "No text selected" as NSString
             return
         }
-        guard let apiKey = appState.keychainStore.retrieveAPIKey() else {
+        guard let apiKey = appState.apiKey else {
             error.pointee = "No API key configured." as NSString
             return
         }
@@ -149,6 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appState.hotkeyManager.resetHoldState()
         _ = appState.audioCaptureEngine.stopCapture()
         appState.isLockMode = false
+        lockActivationReleasePending = false
         appState.mode = .idle
         appState.roughTranscript = ""
         appState.errorMessage = nil
@@ -168,7 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showOnboardingWindow() {
         if onboardingWindow == nil || !onboardingWindow!.isVisible {
-            let view = OnboardingView().environmentObject(appState)
+            let view = OnboardingView(onFinish: { [weak self] in self?.completeOnboarding() }).environmentObject(appState)
             onboardingWindow = makeWindow(title: "Welcome to HDText", view: view, width: 520, height: 480, resizable: false)
         }
         onboardingWindow?.makeKeyAndOrderFront(nil)
@@ -196,7 +198,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    func onOnboardingComplete() {
+    func completeOnboarding() {
+        appState.isOnboardingComplete = true
+        onboardingWindow?.close()
+        onboardingWindow = nil
         ensureAccessibilityThenStart()
     }
 
@@ -225,10 +230,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                                name: .hdtextDictationEnd, object: nil)
 
         appState.hotkeyManager.onHoldStarted = {
-            NotificationCenter.default.post(name: .hdtextDictationStart, object: nil)
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .hdtextDictationStart, object: nil)
+            }
         }
         appState.hotkeyManager.onHoldEnded = {
-            NotificationCenter.default.post(name: .hdtextDictationEnd, object: nil)
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .hdtextDictationEnd, object: nil)
+            }
         }
     }
 
@@ -249,6 +258,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             doubleTapTimer?.invalidate()
             doubleTapTimer = nil
             appState.isLockMode = true
+            lockActivationReleasePending = true
             appState.errorLog.log("Lock mode activated — double-tap to stop", level: .info)
             hdLog("🔒 LOCK MODE ON")
             playSound("Tink")
@@ -268,19 +278,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // --- Lock mode: check for double-tap exit ---
         if appState.isLockMode {
+            if lockActivationReleasePending {
+                lockActivationReleasePending = false
+                return
+            }
             if holdDuration < 0.5 {
                 if let lastExit = lockExitTapTime, Date().timeIntervalSince(lastExit) < 0.5 {
                     // Second quick tap in lock mode → EXIT
                     appState.isLockMode = false
+                    lockActivationReleasePending = false
                     lockExitTapTime = nil
                     appState.errorLog.log("Lock mode deactivated", level: .info)
                     hdLog("🔓 LOCK MODE OFF — finalizing")
                     playSound("Pop")
                     finalizeDictation()
                 } else {
-                    lockExitTapTime = Date()
+                    let stamp = Date()
+                    lockExitTapTime = stamp
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                        self?.lockExitTapTime = nil
+                        if self?.lockExitTapTime == stamp { self?.lockExitTapTime = nil }
                     }
                 }
             }
@@ -395,53 +411,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func attemptSelectedTextViaClipboard(completion: @escaping (String?) -> Void) {
         let pasteboard = NSPasteboard.general
+        let snapshot = PasteboardSnapshot.capture(pasteboard)
         let originalChangeCount = pasteboard.changeCount
-        let originalContents = pasteboard.pasteboardItems?.compactMap { item -> [NSPasteboard.PasteboardType: Data]? in
-            var dict: [NSPasteboard.PasteboardType: Data] = [:]
-            for type in item.types {
-                if let data = item.data(forType: type) {
-                    dict[type] = data
-                }
-            }
-            return dict.isEmpty ? nil : dict
-        }
 
-        let src = CGEventSource(stateID: .combinedSessionState)
-        guard let down = CGEvent(keyboardEventSource: src, virtualKey: 0x08, keyDown: true),
-              let up = CGEvent(keyboardEventSource: src, virtualKey: 0x08, keyDown: false) else {
-            hdLog("Clipboard fallback: failed to create CGEvent for Cmd+C")
-            completion(nil)
-            return
-        }
-        down.flags = .maskCommand
-        up.flags = .maskCommand
-        down.post(tap: .cghidEventTap)
-        up.post(tap: .cghidEventTap)
+        TextInsertionService.postCommandKey(0x08)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            let result: String?
-            if pasteboard.changeCount != originalChangeCount {
-                result = pasteboard.string(forType: .string)
-            } else {
+            guard pasteboard.changeCount != originalChangeCount else {
                 hdLog("Clipboard fallback: changeCount unchanged — no selection copied")
-                result = nil
+                completion(nil)
+                return
             }
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                if let originals = originalContents, !originals.isEmpty {
-                    pasteboard.clearContents()
-                    let items: [NSPasteboardItem] = originals.map { typeMap in
-                        let item = NSPasteboardItem()
-                        for (type, data) in typeMap {
-                            item.setData(data, forType: type)
-                        }
-                        return item
-                    }
-                    pasteboard.writeObjects(items)
-                }
-            }
-
-            completion(result)
+            let copied = pasteboard.string(forType: .string)
+            let copiedChangeCount = pasteboard.changeCount
+            TextInsertionService.restore(snapshot, to: pasteboard, ifChangeCountIs: copiedChangeCount)
+            completion(copied)
         }
     }
 
@@ -472,7 +456,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func handleRefineMenuAction(_ sender: NSMenuItem) {
         guard let ctx = sender.representedObject as? RefineMenuContext else { return }
-        guard let apiKey = appState.keychainStore.retrieveAPIKey() else {
+        guard let apiKey = appState.apiKey else {
             showTemporaryError("No API key configured."); return
         }
         hdLog("Refine via hotkey: \(ctx.action.displayName) on \(ctx.text.count) chars")
@@ -517,7 +501,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appState.mode = .processing
         appState.roughTranscript = "Processing..."
 
-        guard let apiKey = appState.keychainStore.retrieveAPIKey() else {
+        guard let apiKey = appState.apiKey else {
             appState.errorLog.log("API key missing at finalize")
             showTemporaryError("API key missing")
             return
@@ -547,35 +531,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     appState.historyStore.save(record)
                     appState.mode = .idle
 
-                    if let app = self.sourceApp {
-                        app.activate()
-                        hdLog("Reactivated: \(app.localizedName ?? "?")")
-                    }
-
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-                        guard let self = self else { return }
-                        let pasteboard = NSPasteboard.general
-                        let previousClip = pasteboard.string(forType: .string)
-                        pasteboard.clearContents()
-                        pasteboard.setString(cleaned, forType: .string)
-
-                        let src = CGEventSource(stateID: .combinedSessionState)
-                        if let down = CGEvent(keyboardEventSource: src, virtualKey: 0x09, keyDown: true),
-                           let up = CGEvent(keyboardEventSource: src, virtualKey: 0x09, keyDown: false) {
-                            down.flags = .maskCommand
-                            up.flags = .maskCommand
-                            down.post(tap: .cghidEventTap)
-                            up.post(tap: .cghidEventTap)
-                            hdLog("Pasted via Cmd+V")
-                        }
-                        self.playSound("Glass")
-
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                            if let prev = previousClip {
-                                pasteboard.clearContents()
-                                pasteboard.setString(prev, forType: .string)
-                            }
-                        }
+                    appState.textInsertionService.paste(cleaned, into: self.sourceApp) { [weak self] in
+                        self?.playSound("Glass")
                     }
                 }
             } catch let error as TranscriptionError where error == .noSpeechDetected {

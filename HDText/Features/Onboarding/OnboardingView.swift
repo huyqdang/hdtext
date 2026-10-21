@@ -7,7 +7,7 @@ struct OnboardingView: View {
     @State private var apiKeyInput = ""
     @State private var micGranted = false
     @State private var axGranted = false
-    @Environment(\.dismiss) private var dismiss
+    let onFinish: () -> Void
 
     private let totalSteps = 4
     private let permissionTimer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
@@ -16,19 +16,22 @@ struct OnboardingView: View {
         VStack(spacing: 0) {
             progressBar
 
-            TabView(selection: $currentStep) {
-                welcomeStep.tag(0)
-                permissionsStep.tag(1)
-                apiKeyStep.tag(2)
-                readyStep.tag(3)
+            Group {
+                switch currentStep {
+                case 0: welcomeStep
+                case 1: permissionsStep
+                case 2: apiKeyStep
+                default: readyStep
+                }
             }
-            .tabViewStyle(.automatic)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
             navigationButtons
         }
         .padding(24)
         .onAppear {
             refreshPermissions()
+            apiKeyInput = appState.apiKey ?? ""
         }
         .onReceive(permissionTimer) { _ in
             if currentStep == 1 {
@@ -116,7 +119,18 @@ struct OnboardingView: View {
                         AXIsProcessTrustedWithOptions(options)
                     }
                     .buttonStyle(.bordered)
+
+                    Button("Reset & Re-grant") {
+                        AccessibilityPermission.resetAndRegrant()
+                    }
+                    .buttonStyle(.bordered)
                 }
+            }
+
+            if !axGranted {
+                Text("Reinstalled HDText? Use Reset & Re-grant if it already looks enabled in System Settings.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             if micGranted && axGranted {
@@ -151,19 +165,19 @@ struct OnboardingView: View {
                 .frame(maxWidth: 400)
 
             Button("Save Key") {
-                if appState.keychainStore.saveAPIKey(apiKeyInput) {
-                    appState.objectWillChange.send()
-                }
+                appState.saveAPIKey(apiKeyInput)
             }
             .buttonStyle(.borderedProminent)
-            .disabled(apiKeyInput.trimmingCharacters(in: .whitespaces).isEmpty)
+            .disabled(apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+            APIKeyTestButton(keyProvider: { apiKeyInput })
 
             if appState.hasAPIKey {
                 Label("API key saved", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
             }
 
-            Link("Get a free Gemini API key",
+            Link("Get a Gemini API key (Google AI Studio)",
                  destination: URL(string: "https://aistudio.google.com/apikey")!)
                 .font(.caption)
         }
@@ -287,10 +301,10 @@ struct OnboardingView: View {
                 .buttonStyle(.borderedProminent)
             } else {
                 Button("Get Started") {
-                    appState.isOnboardingComplete = true
-                    dismiss()
+                    onFinish()
                 }
                 .buttonStyle(.borderedProminent)
+                .disabled(!appState.hasAPIKey)
             }
         }
         .padding(.top, 16)
