@@ -16,13 +16,31 @@ final class GeminiTranscriptionServiceTests: XCTestCase {
 
     func testEmptyAudioThrows() async {
         do {
-            _ = try await service.transcribe(audioData: Data(), apiKey: "test-key")
+            _ = try await service.transcribe(audioData: Data(), modelName: "gemini-3.5-flash-lite", apiKey: "test-key")
             XCTFail("Expected error for empty audio")
         } catch let error as TranscriptionError {
             XCTAssertEqual(error, .noAudio)
         } catch {
             XCTFail("Unexpected error: \(error)")
         }
+    }
+
+    func testTranscribeSendsWavWithModelThinkingLevel() async throws {
+        StubURLProtocol.reset()
+        StubURLProtocol.responses = [(200, Data(#"{"candidates":[{"content":{"parts":[{"text":"Hello there, this is a dictation test."}]}}]}"#.utf8))]
+        let service = GeminiTranscriptionService(client: GeminiClient(session: StubURLProtocol.makeSession()))
+
+        let text = try await service.transcribeAndClean(
+            audioData: Data(repeating: 1, count: 3200), modelName: "gemini-3.5-flash-lite", apiKey: "AQ.k")
+
+        XCTAssertEqual(text, "Hello there, this is a dictation test.")
+        let body = StubURLProtocol.bodyJSON(of: try XCTUnwrap(StubURLProtocol.requests.first))
+        let parts = ((body["contents"] as? [[String: Any]])?.first?["parts"]) as? [[String: Any]]
+        let inline = parts?.first?["inlineData"] as? [String: Any]
+        XCTAssertEqual(inline?["mimeType"] as? String, "audio/wav")
+        let gen = body["generationConfig"] as? [String: Any]
+        XCTAssertEqual((gen?["thinkingConfig"] as? [String: Any])?["thinkingLevel"] as? String, "minimal")
+        StubURLProtocol.reset()
     }
 
     // MARK: - Prompt Construction: Filler Removal

@@ -1,10 +1,12 @@
 import Foundation
-import GoogleGenerativeAI
 
 final class GeminiTranscriptionService {
 
-    private var cachedModel: GenerativeModel?
-    private var cachedModelKey: String = ""
+    private let client: GeminiClient
+
+    init(client: GeminiClient = GeminiClient()) {
+        self.client = client
+    }
 
     func buildSystemPrompt(
         aggressiveness: RewriteAggressiveness,
@@ -64,7 +66,7 @@ final class GeminiTranscriptionService {
         audioData: Data,
         aggressiveness: RewriteAggressiveness = .balanced,
         smartCorrection: Bool = true,
-        modelName: String = "gemini-2.5-flash",
+        modelName: String,
         apiKey: String
     ) async throws -> String {
         guard !audioData.isEmpty else {
@@ -77,30 +79,18 @@ final class GeminiTranscriptionService {
 
         let systemPrompt = buildSystemPrompt(aggressiveness: aggressiveness, smartCorrection: smartCorrection)
 
-        let cacheKey = "\(modelName)|\(apiKey)|\(aggressiveness.rawValue)|\(smartCorrection)"
-        let model: GenerativeModel
-        if cacheKey == cachedModelKey, let cached = cachedModel {
-            model = cached
-        } else {
-            let systemInstruction = ModelContent(role: "system", parts: systemPrompt)
-            let config = GenerationConfig(temperature: 0.2, topP: 0.9)
-            model = GenerativeModel(
-                name: modelName,
+        let text: String
+        do {
+            text = try await client.generate(
+                model: modelName,
                 apiKey: apiKey,
-                generationConfig: config,
-                systemInstruction: systemInstruction
-            )
-            cachedModel = model
-            cachedModelKey = cacheKey
-        }
-
-        let response = try await model.generateContent(
-            ModelContent.Part.data(mimetype: "audio/wav", wavData),
-            ModelContent.Part.text("Transcribe.")
-        )
-
-        guard let text = response.text?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) else {
-            throw TranscriptionError.emptyResponse
+                systemPrompt: systemPrompt,
+                parts: [.inlineData(mimeType: "audio/wav", data: wavData), .text("Transcribe.")],
+                options: GeminiGenerationOptions(
+                    temperature: 0.2,
+                    thinkingLevel: GeminiModelCatalog.thinkingLevel(forAPIName: modelName)))
+        } catch GeminiAPIError.emptyResponse {
+            throw TranscriptionError.noSpeechDetected
         }
 
         if text == "[NO_SPEECH]" || text.isEmpty {
@@ -124,7 +114,7 @@ final class GeminiTranscriptionService {
 
     func transcribe(
         audioData: Data,
-        modelName: String = "gemini-2.5-flash",
+        modelName: String,
         apiKey: String
     ) async throws -> String {
         try await transcribeAndClean(

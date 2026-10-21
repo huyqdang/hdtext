@@ -1,7 +1,12 @@
 import Foundation
-import GoogleGenerativeAI
 
 final class RefineService {
+    private let client: GeminiClient
+
+    init(client: GeminiClient = GeminiClient()) {
+        self.client = client
+    }
+
     func refine(
         text: String,
         action: RefineAction,
@@ -14,35 +19,23 @@ final class RefineService {
             throw RefineError.emptyInput
         }
 
-        let systemInstruction = ModelContent(
-            role: "system",
-            parts: action.systemPrompt
-        )
-
-        let model = GenerativeModel(
-            name: modelName,
+        return try await client.generate(
+            model: modelName,
             apiKey: apiKey,
-            systemInstruction: systemInstruction
-        )
-
-        let response = try await model.generateContent(trimmed)
-
-        guard let result = response.text else {
-            throw RefineError.emptyResponse
-        }
-
-        return result.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+            systemPrompt: action.systemPrompt,
+            parts: [.text(trimmed)],
+            options: GeminiGenerationOptions(
+                temperature: 0.7,
+                thinkingLevel: GeminiModelCatalog.thinkingLevel(forAPIName: modelName)))
     }
 }
 
 enum RefineError: LocalizedError {
     case emptyInput
-    case emptyResponse
 
     var errorDescription: String? {
         switch self {
         case .emptyInput: return "No text to refine"
-        case .emptyResponse: return "Gemini returned an empty response"
         }
     }
 }
