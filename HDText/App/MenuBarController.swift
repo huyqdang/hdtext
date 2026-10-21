@@ -4,28 +4,33 @@ import Combine
 import AVFoundation
 
 @MainActor
-final class MenuBarController: NSObject {
+final class MenuBarController: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private let appState: AppState
     private var cancellables = Set<AnyCancellable>()
-    private var refreshTimer: Timer?
 
     init(appState: AppState) {
         self.appState = appState
         super.init()
         setupStatusItem()
         observeState()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.rebuildMenu()
-            }
-        }
     }
 
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         updateIcon(for: .idle)
-        rebuildMenu()
+        let menu = NSMenu()
+        menu.delegate = self
+        statusItem?.menu = menu
+        populate(menu)
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        populate(menu)
+    }
+
+    private func rebuildMenu() {
+        if let menu = statusItem?.menu { populate(menu) }
     }
 
     private func observeState() {
@@ -54,8 +59,8 @@ final class MenuBarController: NSObject {
         }
     }
 
-    private func rebuildMenu() {
-        let menu = NSMenu()
+    private func populate(_ menu: NSMenu) {
+        menu.removeAllItems()
 
         let statusTitle: String
         switch appState.mode {
@@ -81,8 +86,8 @@ final class MenuBarController: NSObject {
         menu.addItem(NSMenuItem.separator())
 
         let axOK = AXIsProcessTrusted()
-        let axStatus = axOK ? "Accessibility: Granted" : "Accessibility: NOT GRANTED"
-        let axItem = NSMenuItem(title: axStatus, action: axOK ? nil : #selector(openAccessibilitySettings), keyEquivalent: "")
+        let axStatus = axOK ? "Accessibility: Granted" : "Accessibility: NOT GRANTED — click to reset & re-grant"
+        let axItem = NSMenuItem(title: axStatus, action: axOK ? nil : #selector(resetAccessibility), keyEquivalent: "")
         axItem.target = axOK ? nil : self
         axItem.isEnabled = !axOK
         axItem.image = NSImage(
@@ -159,13 +164,10 @@ final class MenuBarController: NSObject {
 
         let quitItem = NSMenuItem(title: "Quit HDText", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quitItem)
-
-        self.statusItem?.menu = menu
     }
 
-    @objc private func openAccessibilitySettings() {
-        let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue(): true] as CFDictionary
-        AXIsProcessTrustedWithOptions(options)
+    @objc private func resetAccessibility() {
+        AccessibilityPermission.resetAndRegrant()
     }
 
     @objc private func openMicrophoneSettings() {

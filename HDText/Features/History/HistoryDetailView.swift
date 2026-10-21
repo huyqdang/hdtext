@@ -28,8 +28,12 @@ struct HistoryDetailView: View {
                                 NSPasteboard.general.setString(record.cleanedText, forType: .string)
                             }
                             Button("Re-insert") {
-                                appState.textInsertionService.paste(record.cleanedText, into: nil)
+                                let target = NSWorkspace.shared.runningApplications.first {
+                                    $0.localizedName == record.targetApp && $0.bundleIdentifier != Bundle.main.bundleIdentifier
+                                }
+                                appState.textInsertionService.paste(record.cleanedText, into: target)
                             }
+                            .disabled(!NSWorkspace.shared.runningApplications.contains { $0.localizedName == record.targetApp })
                         }
                         .buttonStyle(.borderless)
                         .font(.caption)

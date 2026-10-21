@@ -214,7 +214,7 @@ final class CalibrationViewModel: ObservableObject {
         currentLevel = 0
 
         guard !audioData.isEmpty,
-              let apiKey = appState.keychainStore.retrieveAPIKey() else {
+              let apiKey = appState.apiKey else {
             isCalibrating = false
             return
         }

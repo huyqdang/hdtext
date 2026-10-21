@@ -53,9 +53,7 @@ struct SettingsView: View {
         .frame(width: 700, height: 520)
         .onAppear {
             availableDevices = AudioDeviceManager.availableInputDevices()
-            if let key = appState.keychainStore.retrieveAPIKey() {
-                apiKeyInput = key
-            }
+            apiKeyInput = appState.apiKey ?? ""
         }
     }
 
@@ -184,6 +182,15 @@ struct SettingsView: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
                     }
+
+                    if !AXIsProcessTrusted() {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Accessibility isn't granted. After installing a new build, macOS may still list HDText as enabled while the grant is stale.")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Button("Reset & Re-grant Accessibility") { AccessibilityPermission.resetAndRegrant() }
+                                .controlSize(.small)
+                        }
+                    }
                 }
                 .padding(8)
             }
@@ -282,7 +289,7 @@ struct SettingsView: View {
             GroupBox {
                 HStack(spacing: 6) {
                     Image(systemName: "info.circle").foregroundStyle(.secondary)
-                    Text("Flash Lite is fastest. Flash is a good balance. Pro is highest quality but slower.")
+                    Text("Flash-Lite is fastest and cheapest. Flash is a good balance. 4 Argon is highest quality but slower.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 .padding(4)
@@ -350,10 +357,9 @@ struct SettingsView: View {
 
                     HStack(spacing: 10) {
                         Button("Save Key") {
-                            let trimmed = apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if appState.keychainStore.saveAPIKey(trimmed) {
+                            if appState.saveAPIKey(apiKeyInput) {
+                                apiKeyInput = appState.apiKey ?? ""
                                 apiKeySaveStatus = .saved
-                                appState.objectWillChange.send()
                             } else {
                                 apiKeySaveStatus = .failed
                             }
@@ -363,10 +369,9 @@ struct SettingsView: View {
                         .disabled(apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                         Button("Remove Key") {
-                            appState.keychainStore.deleteAPIKey()
+                            appState.removeAPIKey()
                             apiKeyInput = ""
                             apiKeySaveStatus = .removed
-                            appState.objectWillChange.send()
                             clearStatusAfterDelay()
                         }
                         .buttonStyle(.bordered).controlSize(.small).foregroundStyle(.red)
@@ -375,11 +380,16 @@ struct SettingsView: View {
                         statusBadge
                     }
 
+                    APIKeyTestButton(keyProvider: { apiKeyInput })
+
                     HStack(spacing: 4) {
                         Image(systemName: "lock.shield").foregroundStyle(.secondary)
                         Text("Stored securely in the macOS Keychain.").foregroundStyle(.secondary)
                     }
                     .font(.caption)
+
+                    Text("Keys from Google AI Studio work in either format (AQ.… or AIza…).")
+                        .font(.caption).foregroundStyle(.secondary)
 
                     Link(destination: URL(string: "https://aistudio.google.com/apikey")!) {
                         Label("Get a Gemini API key", systemImage: "arrow.up.right.square")
