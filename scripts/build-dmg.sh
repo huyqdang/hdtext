@@ -12,8 +12,12 @@ echo "==> Cleaning build directory..."
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+echo "==> Generating Xcode project..."
+(cd "$PROJECT_DIR" && xcodegen generate)
+
 echo "==> Building release..."
-/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild \
+xcodebuild \
     -project "$PROJECT_DIR/HDText.xcodeproj" \
     -scheme "$SCHEME" \
     -configuration Release \

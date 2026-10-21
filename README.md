@@ -28,10 +28,10 @@ The refine window lets you switch actions, pick a model, edit both input and out
 - Three cleanup levels: minimal, balanced, polished
 - Smart Correction: predicts and fixes misrecognized words
 - Aggressive filler word removal (um, uh, like, you know, etc.)
-- Configurable Gemini model selection (Flash Lite through Pro)
+- Configurable Gemini model selection (Flash-Lite, Flash, 4 Argon)
 - Hotkey-triggered text refinement with action/model switching
 - Editable preview before replacing text
-- Compact floating indicator dot (draggable, position saved)
+- Compact indicator that follows the cursor
 - Selectable microphone input
 - Microphone calibration screen
 - Local transcription history with search, favorites, and export
@@ -40,7 +40,7 @@ The refine window lets you switch actions, pick a model, edit both input and out
 ## Requirements
 
 - macOS 14.0+
-- A [Gemini API key](https://aistudio.google.com/apikey)
+- A Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey) (new `AQ.` auth keys and older `AIza` keys both work)
 
 ## Install
 
@@ -55,10 +55,12 @@ On first launch, the onboarding flow guides you through:
 
 ```bash
 brew install xcodegen
-cd willow-voice-macos
+cd hdtext
 xcodegen generate
 open HDText.xcodeproj
 ```
+
+If `xcode-select` points at Command Line Tools, prefix the commands with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`.
 
 Build and run the `HDText` target.
 
@@ -67,6 +69,12 @@ Build and run the `HDText` target.
 ```bash
 ./scripts/build-dmg.sh
 ```
+
+## Troubleshooting
+
+- **Hotkey stops working after installing a new build:** click the menu bar icon and choose **Accessibility: NOT GRANTED — click to reset & re-grant**.
+- **"Model … isn't available":** choose a different model in **Settings › Models**.
+- **Check your API key:** use **Settings › API Key › Test Key**.
 
 ## Project Structure
 
@@ -81,7 +89,7 @@ HDText/
 ├── Services/
 │   ├── Audio/              # AVAudioEngine capture and device management
 │   ├── Hotkey/             # Global hold-to-talk shortcut
-│   ├── Gemini/             # Transcription, rewrite, model catalog
+│   ├── Gemini/             # REST client, transcription, model catalog
 │   ├── Insertion/          # Text insertion via paste
 │   ├── Persistence/        # Local history storage
 │   └── Security/           # Keychain API key storage
