@@ -4,32 +4,44 @@ struct GeminiModel: Identifiable, Hashable {
     let id: String
     let displayName: String
     let apiModelName: String
-    let supportsLive: Bool
-    let supportsText: Bool
+    /// thinkingConfig.thinkingLevel sent with requests; nil = omit.
+    let thinkingLevel: String?
 }
 
 enum GeminiModelCatalog {
     static let allModels: [GeminiModel] = [
-        GeminiModel(id: "2.5-flash",           displayName: "Gemini 2.5 Flash",          apiModelName: "gemini-2.5-flash",                supportsLive: false, supportsText: true),
-        GeminiModel(id: "2.5-flash-lite",      displayName: "Gemini 2.5 Flash Lite",     apiModelName: "gemini-2.5-flash-lite",           supportsLive: false, supportsText: true),
-        GeminiModel(id: "2.5-pro",             displayName: "Gemini 2.5 Pro",            apiModelName: "gemini-2.5-pro",                  supportsLive: false, supportsText: true),
-        GeminiModel(id: "3-flash",             displayName: "Gemini 3 Flash",            apiModelName: "gemini-3-flash-preview",           supportsLive: false, supportsText: true),
-        GeminiModel(id: "3.1-flash-lite",      displayName: "Gemini 3.1 Flash Lite",     apiModelName: "gemini-3.1-flash-lite-preview",    supportsLive: false, supportsText: true),
-        GeminiModel(id: "3.1-pro",             displayName: "Gemini 3.1 Pro",            apiModelName: "gemini-3.1-pro-preview",           supportsLive: false, supportsText: true),
+        GeminiModel(id: "3.5-flash-lite", displayName: "Gemini 3.5 Flash-Lite", apiModelName: "gemini-3.5-flash-lite", thinkingLevel: "minimal"),
+        GeminiModel(id: "3.1-flash-lite", displayName: "Gemini 3.1 Flash-Lite", apiModelName: "gemini-3.1-flash-lite", thinkingLevel: "minimal"),
+        GeminiModel(id: "3.8-flash",      displayName: "Gemini 3.8 Flash",      apiModelName: "gemini-3.8-flash",      thinkingLevel: "low"),
+        GeminiModel(id: "3.6-flash",      displayName: "Gemini 3.6 Flash",      apiModelName: "gemini-3.6-flash",      thinkingLevel: "low"),
+        GeminiModel(id: "4-argon",        displayName: "Gemini 4 Argon",        apiModelName: "gemini-4-argon",        thinkingLevel: "low"),
     ]
 
-    static var liveModels: [GeminiModel] { allModels.filter(\.supportsLive) }
-    static var textModels: [GeminiModel] { allModels.filter(\.supportsText) }
-    static var transcriptionModels: [GeminiModel] { allModels.filter(\.supportsText) }
+    static var textModels: [GeminiModel] { allModels }
+    static var transcriptionModels: [GeminiModel] { allModels }
 
-    static let defaultTranscriptionID = "2.5-flash-lite"
-    static let defaultTextID = "2.5-flash"
+    static let defaultTranscriptionID = "3.5-flash-lite"
+    static let defaultTextID = "3.8-flash"
 
     static func model(forID id: String) -> GeminiModel? {
         allModels.first { $0.id == id }
     }
 
+    static func model(forAPIName name: String) -> GeminiModel? {
+        allModels.first { $0.apiModelName == name }
+    }
+
     static func apiName(forID id: String, fallback: String) -> String {
         model(forID: id)?.apiModelName ?? fallback
+    }
+
+    /// Returns `id` if it is still in the catalog, otherwise `fallback` (retired models).
+    static func migrate(id: String?, fallback: String) -> String {
+        guard let id, model(forID: id) != nil else { return fallback }
+        return id
+    }
+
+    static func thinkingLevel(forAPIName name: String) -> String? {
+        model(forAPIName: name)?.thinkingLevel
     }
 }
