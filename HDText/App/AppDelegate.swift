@@ -268,7 +268,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // --- Lock mode: check for double-tap exit ---
         if appState.isLockMode {
-            if holdDuration < 0.35 {
+            if holdDuration < 0.5 {
                 if let lastExit = lockExitTapTime, Date().timeIntervalSince(lastExit) < 0.5 {
                     // Second quick tap in lock mode → EXIT
                     appState.isLockMode = false
@@ -287,14 +287,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // --- Normal mode ---
-        if holdDuration < 0.35 {
-            // Quick tap — potential first of double-tap
+        // --- Normal mode: quick tap ---
+        if holdDuration < 0.5 {
+            guard appState.mode == .listening else {
+                return
+            }
             cancelCapture()
-            lastTapEndTime = Date()
-            doubleTapTimer?.invalidate()
-            doubleTapTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
-                DispatchQueue.main.async { self?.lastTapEndTime = nil }
+            hdLog("Quick tap detected (\(Int(holdDuration * 1000))ms) — looking for selected text")
+
+            if let selectedText = getSelectedTextViaAX(), !selectedText.isEmpty {
+                hdLog("AX selected text found (\(selectedText.count) chars) — showing refine")
+                showRefineActionPicker(for: selectedText)
+                return
+            }
+
+            attemptSelectedTextViaClipboard { [weak self] text in
+                guard let self = self else { return }
+                if let text, !text.isEmpty {
+                    hdLog("Clipboard selected text found (\(text.count) chars) — showing refine")
+                    self.showRefineActionPicker(for: text)
+                } else {
+                    hdLog("No selected text from AX or clipboard")
+                    self.armDoubleTapTimer()
+                }
             }
             return
         }
@@ -320,12 +335,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         sourceApp = NSWorkspace.shared.frontmostApplication
-
-        if !appState.isLockMode, let selectedText = getSelectedTextFromFrontmostApp(), !selectedText.isEmpty {
-            hdLog("Text selected — showing refine picker (\(selectedText.count) chars)")
-            showRefineActionPicker(for: selectedText)
-            return
-        }
 
         hdLog("beginCapture — source app: \(sourceApp?.localizedName ?? "none")")
         if !appState.isLockMode { playSound("Tink") }
@@ -355,18 +364,95 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Refine via Hotkey
 
-    private func getSelectedTextFromFrontmostApp() -> String? {
-        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
-        let appElement = AXUIElementCreateApplication(app.processIdentifier)
-        var focusedElement: AnyObject?
-        guard AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &focusedElement) == .success else { return nil }
-        var selectedText: AnyObject?
-        guard AXUIElementCopyAttributeValue(focusedElement as! AXUIElement, kAXSelectedTextAttribute as CFString, &selectedText) == .success else { return nil }
-        return selectedText as? String
+    private func armDoubleTapTimer() {
+        lastTapEndTime = Date()
+        doubleTapTimer?.invalidate()
+        doubleTapTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+            DispatchQueue.main.async { self?.lastTapEndTime = nil }
+        }
+    }
+
+    private func getSelectedTextViaAX() -> String? {
+        guard AXIsProcessTrusted() else {
+            hdLog("getSelectedTextViaAX: Accessibility not trusted")
+            return nil
+        }
+        let systemWide = AXUIElementCreateSystemWide()
+        var focused: AnyObject?
+        let focusResult = AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focused)
+        guard focusResult == .success, let focusedElement = focused else {
+            hdLog("getSelectedTextViaAX: system-wide focus failed (\(focusResult.rawValue))")
+            return nil
+        }
+        var selected: AnyObject?
+        let selectResult = AXUIElementCopyAttributeValue(focusedElement as! AXUIElement, kAXSelectedTextAttribute as CFString, &selected)
+        guard selectResult == .success else {
+            hdLog("getSelectedTextViaAX: selected-text failed (\(selectResult.rawValue))")
+            return nil
+        }
+        return selected as? String
+    }
+
+    private func attemptSelectedTextViaClipboard(completion: @escaping (String?) -> Void) {
+        let pasteboard = NSPasteboard.general
+        let originalChangeCount = pasteboard.changeCount
+        let originalContents = pasteboard.pasteboardItems?.compactMap { item -> [NSPasteboard.PasteboardType: Data]? in
+            var dict: [NSPasteboard.PasteboardType: Data] = [:]
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    dict[type] = data
+                }
+            }
+            return dict.isEmpty ? nil : dict
+        }
+
+        let src = CGEventSource(stateID: .combinedSessionState)
+        guard let down = CGEvent(keyboardEventSource: src, virtualKey: 0x08, keyDown: true),
+              let up = CGEvent(keyboardEventSource: src, virtualKey: 0x08, keyDown: false) else {
+            hdLog("Clipboard fallback: failed to create CGEvent for Cmd+C")
+            completion(nil)
+            return
+        }
+        down.flags = .maskCommand
+        up.flags = .maskCommand
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            let result: String?
+            if pasteboard.changeCount != originalChangeCount {
+                result = pasteboard.string(forType: .string)
+            } else {
+                hdLog("Clipboard fallback: changeCount unchanged — no selection copied")
+                result = nil
+            }
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                if let originals = originalContents, !originals.isEmpty {
+                    pasteboard.clearContents()
+                    let items: [NSPasteboardItem] = originals.map { typeMap in
+                        let item = NSPasteboardItem()
+                        for (type, data) in typeMap {
+                            item.setData(data, forType: type)
+                        }
+                        return item
+                    }
+                    pasteboard.writeObjects(items)
+                }
+            }
+
+            completion(result)
+        }
     }
 
     private func showRefineActionPicker(for text: String) {
         appState.hotkeyManager.resetHoldState()
+        lastTapEndTime = nil
+        doubleTapTimer?.invalidate()
+        doubleTapTimer = nil
+        dictationStartTime = nil
+        appState.mode = .idle
+
         let menu = NSMenu(title: "Refine Text")
         for action in RefineAction.allCases {
             let item = NSMenuItem(title: action.displayName, action: #selector(handleRefineMenuAction(_:)), keyEquivalent: "")

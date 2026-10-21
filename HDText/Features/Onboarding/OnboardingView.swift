@@ -96,15 +96,15 @@ struct OnboardingView: View {
             HStack(spacing: 12) {
                 if !micGranted {
                     Button("Request Microphone") {
-                        let status = AVCaptureDevice.authorizationStatus(for: .audio)
-                        if status == .notDetermined {
-                            AVCaptureDevice.requestAccess(for: .audio) { granted in
-                                Task { @MainActor in
-                                    micGranted = granted
+                        AVCaptureDevice.requestAccess(for: .audio) { granted in
+                            Task { @MainActor in
+                                micGranted = granted
+                                if granted {
+                                    NSApp.activate(ignoringOtherApps: true)
+                                } else {
+                                    openPrivacySettings("Microphone")
                                 }
                             }
-                        } else {
-                            openPrivacySettings("Microphone")
                         }
                     }
                     .buttonStyle(.borderedProminent)

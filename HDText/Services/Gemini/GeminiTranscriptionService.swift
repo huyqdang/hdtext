@@ -6,6 +6,60 @@ final class GeminiTranscriptionService {
     private var cachedModel: GenerativeModel?
     private var cachedModelKey: String = ""
 
+    func buildSystemPrompt(
+        aggressiveness: RewriteAggressiveness,
+        smartCorrection: Bool
+    ) -> String {
+        let cleanupLevel: String
+        switch aggressiveness {
+        case .minimal:
+            cleanupLevel = "Fix punctuation. Remove false starts and repeated words. Keep original phrasing."
+        case .balanced:
+            cleanupLevel = "Fix grammar, punctuation, and sentence breaks. Remove ALL filler words and hesitation sounds, even mid-sentence. Remove false starts, repetitions, self-corrections, and duplicated phrases. Keep the speaker's tone and vocabulary."
+        case .polished:
+            cleanupLevel = "Fix grammar. Improve sentence structure for clarity and flow. Keep the speaker's voice and intent."
+        }
+
+        let smartCorrectionRule: String
+        if smartCorrection {
+            smartCorrectionRule = """
+
+            SMART CORRECTION:
+            - If a word makes no sense in context and sounds phonetically similar to a word that fits, replace it with the fitting word.
+            - Only replace when the sentence is clearly nonsensical with the original word. If unsure, keep the original.
+            - Prefer words that are phonetically close AND contextually appropriate over distant guesses.
+            - NEVER replace names, numbers, technical terms, or domain-specific vocabulary.
+            """
+        } else {
+            smartCorrectionRule = ""
+        }
+
+        return """
+        You are a speech-to-text transcription assistant. Your ONLY job is to accurately transcribe spoken audio and clean it up.
+        CRITICAL RULES:
+        1. Transcribe EXACTLY what the speaker says. Never invent, add, or hallucinate content.
+        2. Remove ALL filler words and hesitation sounds. This includes all forms and variations of: um, umm, uh, uh huh, uhh, hmm, ah, ahh, er, eh, like (when used as filler), you know, basically, literally, I mean, kind of, sort of, right (filler), so (filler), well (filler), actually (filler), and any other non-content vocalization. Remove them whether they appear at the start, middle, or end of a sentence.
+        3. Remove ALL duplicate phrases, stutters, restarts, and self-corrections. When a speaker repeats or restarts a phrase, keep only ONE clean version that captures the full intent. This includes adjacent duplicates AND nearby duplicates (separated by a few words). Examples:
+           - "I need to grab I need to grab water." → "I need to grab water."
+           - "Hello, hello." → "Hello."
+           - "Let me think let me think about it." → "Let me think about it."
+           - "Can you can you check this?" → "Can you check this?"
+           - "So the the issue is" → "So the issue is"
+           - "I need to grab. Need to grab a water." → "I need to grab a water."
+           - "I need to grab. Need to grab a water. Be right back." → "I need to grab a water. Be right back."
+           - "This is testing. One two three. This is testing." → "This is testing. One two three."
+           - "Let me see. Let me see if this works." → "Let me see if this works."
+           - "Tomorrow I will. Tomorrow I will go to the store." → "Tomorrow I will go to the store."
+           - "Send the email send the email to John." → "Send the email to John."
+           Detect restarts even when not word-for-word identical — if the speaker clearly began a phrase, paused, then restarted with more detail, keep only the more complete version. Apply this aggressively.
+        4. \(cleanupLevel)\(smartCorrectionRule)
+        5. Preserve ALL names, numbers, technical terms, negations, and meaning exactly as spoken.
+        6. Do NOT add information the speaker did not say. Do NOT rephrase into different meanings.
+        7. Output ONLY the cleaned transcription. No labels, timestamps, or commentary.
+        8. If no speech is detected: output [NO_SPEECH]
+        """
+    }
+
     func transcribeAndClean(
         audioData: Data,
         aggressiveness: RewriteAggressiveness = .balanced,
@@ -21,31 +75,7 @@ final class GeminiTranscriptionService {
 
         let wavData = wrapInWAV(pcmData: audioData, sampleRate: 16000, channels: 1, bitsPerSample: 16)
 
-        let cleanupLevel: String
-        switch aggressiveness {
-        case .minimal:
-            cleanupLevel = "Fix punctuation. Remove false starts and repeated words. Keep original phrasing."
-        case .balanced:
-            cleanupLevel = "Fix grammar, punctuation, and sentence breaks. Remove false starts, repetitions, and self-corrections. Keep the speaker's tone."
-        case .polished:
-            cleanupLevel = "Fix grammar. Improve sentence structure for clarity and flow. Keep the speaker's voice and intent."
-        }
-
-        let smartCorrectionRule = smartCorrection
-            ? "\n- If a word clearly doesn't fit the sentence context, replace it with the most likely intended word."
-            : ""
-
-        let systemPrompt = """
-        You are a speech-to-text transcription assistant. Your ONLY job is to accurately transcribe spoken audio and lightly clean it up.
-        CRITICAL RULES:
-        1. Transcribe EXACTLY what the speaker says. Never invent, add, or hallucinate content.
-        2. Remove filler words: um, uh, uh huh, hmm, ah, er, like (filler), you know, basically, literally, I mean, kind of, sort of, right, so (filler), well (filler), actually (filler).
-        3. \(cleanupLevel)\(smartCorrectionRule)
-        4. Preserve ALL names, numbers, technical terms, negations, and meaning exactly as spoken.
-        5. Do NOT add information the speaker did not say. Do NOT rephrase into different meanings.
-        6. Output ONLY the cleaned transcription. No labels, timestamps, or commentary.
-        7. If no speech is detected: output [NO_SPEECH]
-        """
+        let systemPrompt = buildSystemPrompt(aggressiveness: aggressiveness, smartCorrection: smartCorrection)
 
         let cacheKey = "\(modelName)|\(apiKey)|\(aggressiveness.rawValue)|\(smartCorrection)"
         let model: GenerativeModel
@@ -53,7 +83,13 @@ final class GeminiTranscriptionService {
             model = cached
         } else {
             let systemInstruction = ModelContent(role: "system", parts: systemPrompt)
-            model = GenerativeModel(name: modelName, apiKey: apiKey, systemInstruction: systemInstruction)
+            let config = GenerationConfig(temperature: 0.2, topP: 0.9)
+            model = GenerativeModel(
+                name: modelName,
+                apiKey: apiKey,
+                generationConfig: config,
+                systemInstruction: systemInstruction
+            )
             cachedModel = model
             cachedModelKey = cacheKey
         }

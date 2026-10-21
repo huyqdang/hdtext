@@ -121,7 +121,7 @@ enum RewriteAggressiveness: String, CaseIterable, Identifiable {
     var description: String {
         switch self {
         case .minimal: return "Remove fillers only, keep your phrasing"
-        case .balanced: return "Fix grammar and punctuation, preserve meaning"
+        case .balanced: return "Remove all fillers, fix grammar and punctuation"
         case .polished: return "Smooth and restructure for clarity"
         }
     }

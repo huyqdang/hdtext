@@ -6,12 +6,16 @@ final class HotkeyManagerTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
+        UserDefaults.standard.removeObject(forKey: "hotkeyModifiers")
+        UserDefaults.standard.removeObject(forKey: "hotkeyKeyCode")
         manager = HotkeyManager()
     }
 
     override func tearDown() {
         manager.stopMonitoring()
         manager = nil
+        UserDefaults.standard.removeObject(forKey: "hotkeyModifiers")
+        UserDefaults.standard.removeObject(forKey: "hotkeyKeyCode")
         super.tearDown()
     }
 
@@ -45,5 +49,29 @@ final class HotkeyManagerTests: XCTestCase {
 
         XCTAssertNotNil(manager.onHoldStarted)
         XCTAssertNotNil(manager.onHoldEnded)
+    }
+
+    // MARK: - Hold State Management
+
+    func testResetHoldStateClearsHolding() {
+        manager.onHoldStarted = {}
+        manager.onHoldEnded = {}
+
+        manager.resetHoldState()
+        XCTAssertFalse(manager.isHolding, "resetHoldState should clear isHolding")
+    }
+
+    func testForceReleaseCallsOnHoldEnded() {
+        var endedCalled = false
+        manager.onHoldEnded = { endedCalled = true }
+
+        manager.forceRelease()
+        XCTAssertFalse(endedCalled, "forceRelease should not fire when not holding")
+    }
+
+    func testStopMonitoringResetsState() {
+        manager.stopMonitoring()
+        XCTAssertFalse(manager.isHolding)
+        XCTAssertFalse(manager.isMonitoring)
     }
 }

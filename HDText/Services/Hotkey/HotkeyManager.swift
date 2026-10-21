@@ -10,6 +10,7 @@ final class HotkeyManager {
     private var releasePoller: Timer?
     private(set) var isHolding = false
     private(set) var isMonitoring = false
+    fileprivate var isTriggerKeyDown = false
 
     private var modifierFlags: CGEventFlags = [.maskControl, .maskAlternate]
     private var triggerKeyCode: CGKeyCode = 49  // spacebar
@@ -121,9 +122,13 @@ final class HotkeyManager {
 
     /// Returns true if the event is our hotkey and should be suppressed.
     fileprivate func handleTapEvent(type: CGEventType, event: CGEvent) -> Bool {
-        if type == .keyUp && isHolding {
+        if type == .keyUp {
             let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
-            if keyCode == triggerKeyCode { return true }
+            if keyCode == triggerKeyCode {
+                isTriggerKeyDown = false
+                if isHolding { return true }
+            }
+            return false
         }
 
         guard type == .keyDown else { return false }
@@ -135,6 +140,8 @@ final class HotkeyManager {
             [.maskControl, .maskAlternate, .maskCommand, .maskShift]
         )
         guard relevantFlags == modifierFlags else { return false }
+
+        isTriggerKeyDown = true
 
         if !isHolding {
             hdLog("▶ HOLD STARTED")
@@ -160,14 +167,16 @@ final class HotkeyManager {
             self.pollCount += 1
 
             let nsFlags = NSEvent.modifierFlags
-            let held = self.nsModifiersContainRequired(nsFlags)
+            let modifiersHeld = self.nsModifiersContainRequired(nsFlags)
+            let triggerHeld = self.isTriggerKeyDown
+            let held = modifiersHeld && triggerHeld
 
             if self.pollCount <= 3 {
-                hdLog("Poll #\(self.pollCount): NSEvent.modifierFlags=\(nsFlags.rawValue) held=\(held)")
+                hdLog("Poll #\(self.pollCount): mods=\(modifiersHeld) trigger=\(triggerHeld)")
             }
 
             if !held {
-                hdLog("■ RELEASED after \(self.pollCount) polls")
+                hdLog("■ RELEASED after \(self.pollCount) polls (mods=\(modifiersHeld) trigger=\(triggerHeld))")
                 self.isHolding = false
                 t.invalidate()
                 self.releasePoller = nil
@@ -189,11 +198,40 @@ final class HotkeyManager {
         return true
     }
 
+    private var tapDisabledCount = 0
+
     fileprivate func handleTapDisabled() {
-        NSLog("[HD Text] Event tap disabled by system — re-enabling")
+        tapDisabledCount += 1
+        NSLog("[HD Text] Event tap disabled by system (count: \(tapDisabledCount)) — recovering")
+
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: true)
+
+            if !CFMachPortIsValid(tap) {
+                NSLog("[HD Text] Tap port invalid after re-enable — recreating")
+                recreateEventTap()
+                return
+            }
+        } else {
+            NSLog("[HD Text] Event tap nil during recovery — recreating")
+            recreateEventTap()
         }
+    }
+
+    private func recreateEventTap() {
+        if let source = runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+            runLoopSource = nil
+        }
+        if let tap = eventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            eventTap = nil
+        }
+        isHolding = false
+        releasePoller?.invalidate()
+        releasePoller = nil
+
+        createEventTap()
     }
 
     // MARK: - Persistence

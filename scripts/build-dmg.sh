@@ -13,7 +13,7 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
 echo "==> Building release..."
-xcodebuild \
+/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild \
     -project "$PROJECT_DIR/HDText.xcodeproj" \
     -scheme "$SCHEME" \
     -configuration Release \
