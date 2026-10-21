@@ -54,6 +54,9 @@ final class GeminiClientTests: XCTestCase {
         XCTAssertEqual(GeminiClient.mapError(status: 400, body: json("""
             {"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT","details":[{"reason":"API_KEY_INVALID"}]}}
             """), model: "m"), .invalidKey)
+        XCTAssertEqual(GeminiClient.mapError(status: 403, body: json("""
+            {"error":{"code":403,"message":"Permission denied on resource model gemini-x.","status":"PERMISSION_DENIED"}}
+            """), model: "gemini-x"), .modelUnavailable("gemini-x"))
         XCTAssertEqual(GeminiClient.mapError(status: 404, body: Data(), model: "gemini-x"), .modelUnavailable("gemini-x"))
         XCTAssertEqual(GeminiClient.mapError(status: 429, body: Data(), model: "m"), .rateLimited)
         XCTAssertEqual(GeminiClient.mapError(status: 503, body: Data(), model: "m"), .server(503))

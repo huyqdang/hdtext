@@ -43,6 +43,27 @@ final class GeminiTranscriptionServiceTests: XCTestCase {
         StubURLProtocol.reset()
     }
 
+    func testPhantomFilterKeepsRealSentencesAndRejectsExactPhrase() async throws {
+        StubURLProtocol.reset()
+        StubURLProtocol.responses = [
+            (200, Data(#"{"candidates":[{"content":{"parts":[{"text":"Thank you for sending that over."}]}}]}"#.utf8)),
+            (200, Data(#"{"candidates":[{"content":{"parts":[{"text":"Thank you."}]}}]}"#.utf8)),
+        ]
+        let service = GeminiTranscriptionService(client: GeminiClient(session: StubURLProtocol.makeSession()))
+        let audio = Data(repeating: 1, count: 3200)
+
+        let text = try await service.transcribeAndClean(audioData: audio, modelName: "gemini-3.5-flash-lite", apiKey: "k")
+        XCTAssertEqual(text, "Thank you for sending that over.")
+
+        do {
+            _ = try await service.transcribeAndClean(audioData: audio, modelName: "gemini-3.5-flash-lite", apiKey: "k")
+            XCTFail("Expected exact phantom phrase to be rejected")
+        } catch let error as TranscriptionError {
+            XCTAssertEqual(error, .noSpeechDetected)
+        }
+        StubURLProtocol.reset()
+    }
+
     // MARK: - Prompt Construction: Filler Removal
 
     func testBalancedPromptIncludesAggressiveFillerRemoval() {

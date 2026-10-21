@@ -92,7 +92,8 @@ HDText/
 │   ├── Gemini/             # REST client, transcription, model catalog
 │   ├── Insertion/          # Text insertion via paste
 │   ├── Persistence/        # Local history storage
-│   └── Security/           # Keychain API key storage
+│   ├── Security/           # Keychain API key storage
+│   └── Util/               # Logging, Accessibility reset, ObjC exception bridge
 ├── Views/                  # Settings, overlay, shortcut recorder
 └── Resources/              # Info.plist, entitlements, assets
 ```

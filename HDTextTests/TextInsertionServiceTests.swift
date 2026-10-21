@@ -47,4 +47,24 @@ final class TextInsertionServiceTests: XCTestCase {
         XCTAssertFalse(TextInsertionService.restore(snapshot, to: pasteboard, ifChangeCountIs: ours))
         XCTAssertEqual(pasteboard.string(forType: .string), "user copied")
     }
+
+    func testOverlappingPastesRestoreTheUsersOriginalClipboard() {
+        pasteboard.clearContents()
+        pasteboard.setString("original", forType: .string)
+
+        let snapshotA = TextInsertionService.captureOriginal(pasteboard)
+        pasteboard.clearContents()
+        pasteboard.setString("A", forType: .string)
+        TextInsertionService.markOurWrite(snapshotA, changeCount: pasteboard.changeCount, on: pasteboard)
+
+        let snapshotB = TextInsertionService.captureOriginal(pasteboard)
+        XCTAssertEqual(snapshotB.items.first?[.string], Data("original".utf8))
+        pasteboard.clearContents()
+        pasteboard.setString("B", forType: .string)
+        let ourB = pasteboard.changeCount
+        TextInsertionService.markOurWrite(snapshotB, changeCount: ourB, on: pasteboard)
+
+        XCTAssertTrue(TextInsertionService.restore(snapshotB, to: pasteboard, ifChangeCountIs: ourB))
+        XCTAssertEqual(pasteboard.string(forType: .string), "original")
+    }
 }

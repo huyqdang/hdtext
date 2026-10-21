@@ -34,6 +34,7 @@ struct APIKeyTestButton: View {
                 Label(message, systemImage: "xmark.circle.fill").font(.caption).foregroundStyle(.red)
             }
         }
+        .onChange(of: keyProvider()) { state = .idle }
     }
 
     private func runTest() {
@@ -42,15 +43,18 @@ struct APIKeyTestButton: View {
         state = .testing
         let needed = [appState.transcriptionModelAPIName, appState.rewriteModelAPIName]
         Task { @MainActor in
+            let result: TestState
             do {
                 let available = try await GeminiClient().listModels(apiKey: key)
                 let missing = needed.filter { !available.contains($0) }
-                state = missing.isEmpty
+                result = missing.isEmpty
                     ? .ok("Key works")
                     : .warning("Key works, but unavailable: \(missing.joined(separator: ", "))")
             } catch {
-                state = .failed(error.localizedDescription)
+                result = .failed(error.localizedDescription)
             }
+            guard keyProvider().trimmingCharacters(in: .whitespacesAndNewlines) == key else { return }
+            state = result
         }
     }
 }

@@ -97,13 +97,14 @@ final class GeminiTranscriptionService {
             throw TranscriptionError.noSpeechDetected
         }
 
-        let lower = text.lowercased()
-        let phantomPhrases = [
+        let normalized = text.lowercased()
+            .trimmingCharacters(in: CharacterSet.punctuationCharacters.union(.whitespacesAndNewlines))
+        let phantomPhrases: Set<String> = [
             "transcribe", "i will transcribe", "transcribe for you",
-            "no speech", "silence", "no audio", "[silence]",
+            "no speech", "silence", "no audio",
             "thank you", "thanks for watching",
         ]
-        if text.count < 30, phantomPhrases.contains(where: { lower.contains($0) }) {
+        if phantomPhrases.contains(normalized) {
             hdLog("Rejected phantom transcription: \(text)")
             throw TranscriptionError.noSpeechDetected
         }

@@ -55,6 +55,8 @@ final class GeminiClient {
     }()
 
     private let session: URLSession
+    private let thinkingLock = NSLock()
+    private var modelsWithoutThinking = Set<String>()
 
     init(session: URLSession = GeminiClient.defaultSession) {
         self.session = session
@@ -67,12 +69,13 @@ final class GeminiClient {
         parts: [GeminiPart],
         options: GeminiGenerationOptions
     ) async throws -> String {
-        let wantsThinking = options.thinkingLevel != nil
+        let wantsThinking = options.thinkingLevel != nil && !rejectsThinking(model)
         do {
             return try await send(model: model, apiKey: apiKey, systemPrompt: systemPrompt,
                                   parts: parts, options: options, includeThinking: wantsThinking)
         } catch GeminiAPIError.badRequest(let message) where wantsThinking && message.lowercased().contains("thinking") {
             hdLog("Model \(model) rejected thinkingConfig — retrying without it")
+            thinkingLock.withLock { _ = modelsWithoutThinking.insert(model) }
             return try await send(model: model, apiKey: apiKey, systemPrompt: systemPrompt,
                                   parts: parts, options: options, includeThinking: false)
         }
@@ -94,6 +97,10 @@ final class GeminiClient {
     }
 
     // MARK: - Internals
+
+    private func rejectsThinking(_ model: String) -> Bool {
+        thinkingLock.withLock { modelsWithoutThinking.contains(model) }
+    }
 
     private func send(
         model: String, apiKey: String, systemPrompt: String?,
@@ -188,7 +195,14 @@ final class GeminiClient {
         let message = error?["message"] as? String ?? ""
         let raw = String(data: body, encoding: .utf8) ?? ""
         switch status {
-        case 401, 403:
+        case 401:
+            return .invalidKey
+        case 403:
+            let mentionsModel = message.localizedCaseInsensitiveContains("model")
+                || (raw.contains("PERMISSION_DENIED") && message.contains(model))
+            if !model.isEmpty, !raw.contains("API_KEY_INVALID"), mentionsModel {
+                return .modelUnavailable(model)
+            }
             return .invalidKey
         case 400:
             if raw.contains("API_KEY_INVALID") || message.localizedCaseInsensitiveContains("api key") {

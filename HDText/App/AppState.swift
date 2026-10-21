@@ -110,7 +110,11 @@ final class AppState: ObservableObject {
     @discardableResult
     func saveAPIKey(_ raw: String) -> Bool {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, keychainStore.saveAPIKey(trimmed) else { return false }
+        guard !trimmed.isEmpty else { return false }
+        guard keychainStore.saveAPIKey(trimmed) else {
+            apiKey = keychainStore.retrieveAPIKey()
+            return false
+        }
         apiKey = trimmed
         return true
     }

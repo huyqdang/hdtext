@@ -4,6 +4,12 @@ struct HistoryDetailView: View {
     let record: TranscriptionRecord
     @EnvironmentObject var appState: AppState
 
+    private var reinsertTarget: NSRunningApplication? {
+        NSWorkspace.shared.runningApplications.first {
+            $0.localizedName == record.targetApp && $0.bundleIdentifier != Bundle.main.bundleIdentifier
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -22,18 +28,16 @@ struct HistoryDetailView: View {
                             .background(Color.green.opacity(0.06))
                             .cornerRadius(8)
 
+                        let reinsertTarget = self.reinsertTarget
                         HStack {
                             Button("Copy") {
                                 NSPasteboard.general.clearContents()
                                 NSPasteboard.general.setString(record.cleanedText, forType: .string)
                             }
                             Button("Re-insert") {
-                                let target = NSWorkspace.shared.runningApplications.first {
-                                    $0.localizedName == record.targetApp && $0.bundleIdentifier != Bundle.main.bundleIdentifier
-                                }
-                                appState.textInsertionService.paste(record.cleanedText, into: target)
+                                appState.textInsertionService.paste(record.cleanedText, into: reinsertTarget)
                             }
-                            .disabled(!NSWorkspace.shared.runningApplications.contains { $0.localizedName == record.targetApp })
+                            .disabled(reinsertTarget == nil)
                         }
                         .buttonStyle(.borderless)
                         .font(.caption)

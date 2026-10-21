@@ -303,7 +303,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     lockExitTapTime = nil
                     appState.errorLog.log("Lock mode deactivated", level: .info)
                     hdLog("🔓 LOCK MODE OFF — finalizing")
-                    playSound("Pop")
                     finalizeDictation()
                 } else {
                     let stamp = Date()
@@ -365,6 +364,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var refineActionMenu: NSMenu?
 
     private func beginCapture() {
+        if appState.mode == .processing {
+            hdLog("beginCapture: transcription still running — ignoring")
+            appState.isLockMode = false
+            lockActivationReleasePending = false
+            return
+        }
         guard appState.mode == .idle || appState.isLockMode else { return }
 
         guard appState.hasAPIKey else {
@@ -439,7 +444,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func attemptSelectedTextViaClipboard(completion: @escaping (String?) -> Void) {
         let pasteboard = NSPasteboard.general
-        let snapshot = PasteboardSnapshot.capture(pasteboard)
+        let snapshot = TextInsertionService.captureOriginal(pasteboard)
         let originalChangeCount = pasteboard.changeCount
 
         let deadline = Date().addingTimeInterval(0.4)
@@ -447,9 +452,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         TextInsertionService.postCommandKey(0x08)
 
         func poll() {
-            if pasteboard.changeCount != originalChangeCount {
+            let copiedChangeCount = pasteboard.changeCount
+            if copiedChangeCount != originalChangeCount {
                 let copied = pasteboard.string(forType: .string)
-                TextInsertionService.restore(snapshot, to: pasteboard, ifChangeCountIs: pasteboard.changeCount)
+                TextInsertionService.restore(snapshot, to: pasteboard, ifChangeCountIs: copiedChangeCount)
                 completion(copied)
                 return
             }
@@ -510,6 +516,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let audioData = appState.audioCaptureEngine.stopCapture()
         hdLog("Audio captured: \(audioData.count) bytes")
 
+        if appState.mode == .processing {
+            hdLog("finalizeDictation: transcription still running — ignoring release")
+            return
+        }
         guard appState.mode == .listening else {
             hdLog("finalizeDictation: mode is \(appState.mode) not .listening — resetting")
             appState.errorLog.log("finalizeDictation skipped", detail: "mode was \(appState.mode.rawValue), expected listening", level: .warning)
