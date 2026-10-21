@@ -87,7 +87,9 @@ final class RefinePreviewViewModel: ObservableObject {
     var onCancel: (() -> Void)?
 
     var selectedModelAPIName: String {
-        GeminiModelCatalog.apiName(forID: GeminiModelCatalog.defaultTextID, fallback: "gemini-3.8-flash")
+        GeminiModelCatalog.apiName(
+            forID: selectedModelID,
+            fallback: GeminiModelCatalog.apiName(forID: GeminiModelCatalog.defaultTextID, fallback: "gemini-3.8-flash"))
     }
 
     init(originalText: String, action: RefineAction, modelID: String, apiKey: String) {
