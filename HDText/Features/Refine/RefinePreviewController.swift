@@ -5,7 +5,7 @@ import Combine
 @MainActor
 final class RefinePreviewController {
     private var window: NSWindow?
-    private let refineService = RefineService()
+    private let inserter = TextInsertionService()
 
     func showPreview(
         originalText: String,
@@ -14,17 +14,18 @@ final class RefinePreviewController {
         apiKey: String,
         sourceApp: NSRunningApplication?
     ) {
+        dismissWindow()
+
         let viewModel = RefinePreviewViewModel(
             originalText: originalText,
             action: action,
-            modelID: GeminiModelCatalog.allModels.first(where: { $0.apiModelName == modelName })?.id
-                ?? GeminiModelCatalog.defaultTextID,
+            modelID: GeminiModelCatalog.model(forAPIName: modelName)?.id ?? GeminiModelCatalog.defaultTextID,
             apiKey: apiKey
         )
 
         viewModel.onReplace = { [weak self] finalText in
-            self?.replaceInSourceApp(finalText, sourceApp: sourceApp)
             self?.dismissWindow()
+            self?.inserter.paste(finalText, into: sourceApp)
         }
 
         viewModel.onCopy = { [weak self] finalText in
@@ -58,27 +59,7 @@ final class RefinePreviewController {
         NSApp.activate(ignoringOtherApps: true)
 
         Task {
-            await viewModel.generate(service: refineService)
-        }
-    }
-
-    private func replaceInSourceApp(_ text: String, sourceApp: NSRunningApplication?) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
-
-        if let app = sourceApp {
-            app.activate()
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            let source = CGEventSource(stateID: .combinedSessionState)
-            guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true),
-                  let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false) else { return }
-            keyDown.flags = .maskCommand
-            keyUp.flags = .maskCommand
-            keyDown.post(tap: .cghidEventTap)
-            keyUp.post(tap: .cghidEventTap)
+            await viewModel.generate()
         }
     }
 
@@ -91,6 +72,8 @@ final class RefinePreviewController {
 @MainActor
 final class RefinePreviewViewModel: ObservableObject {
     let apiKey: String
+    private let service = RefineService()
+    private var generation = 0
 
     @Published var inputText: String
     @Published var action: RefineAction
@@ -104,7 +87,7 @@ final class RefinePreviewViewModel: ObservableObject {
     var onCancel: (() -> Void)?
 
     var selectedModelAPIName: String {
-        GeminiModelCatalog.apiName(forID: selectedModelID, fallback: "gemini-2.5-flash")
+        GeminiModelCatalog.apiName(forID: GeminiModelCatalog.defaultTextID, fallback: "gemini-3.8-flash")
     }
 
     init(originalText: String, action: RefineAction, modelID: String, apiKey: String) {
@@ -114,22 +97,21 @@ final class RefinePreviewViewModel: ObservableObject {
         self.apiKey = apiKey
     }
 
-    func generate(service: RefineService) async {
+    func generate() async {
+        generation += 1
+        let current = generation
         isLoading = true
         errorMessage = nil
         do {
-            let result = try await service.refine(
-                text: inputText,
-                action: action,
-                modelName: selectedModelAPIName,
-                apiKey: apiKey
-            )
+            let result = try await service.refine(text: inputText, action: action,
+                                                  modelName: selectedModelAPIName, apiKey: apiKey)
+            guard current == generation else { return }
             refinedText = result
-            isLoading = false
         } catch {
+            guard current == generation else { return }
             errorMessage = error.localizedDescription
             refinedText = inputText
-            isLoading = false
         }
+        isLoading = false
     }
 }

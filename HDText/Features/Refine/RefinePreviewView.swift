@@ -2,7 +2,6 @@ import SwiftUI
 
 struct RefinePreviewView: View {
     @ObservedObject var viewModel: RefinePreviewViewModel
-    private let refineService = RefineService()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -13,6 +12,8 @@ struct RefinePreviewView: View {
             actionBar
         }
         .frame(minWidth: 480, minHeight: 380)
+        .onChange(of: viewModel.action) { _, _ in Task { await viewModel.generate() } }
+        .onChange(of: viewModel.selectedModelID) { _, _ in Task { await viewModel.generate() } }
     }
 
     // MARK: - Toolbar
@@ -38,12 +39,11 @@ struct RefinePreviewView: View {
             .frame(width: 180)
 
             Button {
-                Task { await viewModel.generate(service: refineService) }
+                Task { await viewModel.generate() }
             } label: {
                 Label("Generate", systemImage: "arrow.clockwise")
             }
             .controlSize(.small)
-            .disabled(viewModel.isLoading)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
