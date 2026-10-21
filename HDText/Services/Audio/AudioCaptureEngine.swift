@@ -5,8 +5,12 @@ import AVFoundation
 /// Uses AVCaptureSession bound to the chosen device. AVAudioEngine's input node follows the
 /// system default input: selecting another mic made it open the default device too (e.g. Bluetooth
 /// headphones), whose profile switch fired a configuration change that stopped the engine ~1 s in.
+///
+/// Session setup, start and stop run on `sessionQueue`, never the caller's thread: they take ~0.3 s,
+/// and the main thread also services the global hotkey event tap, so blocking it stalls every keystroke.
 final class AudioCaptureEngine: NSObject {
-    private var session: AVCaptureSession?
+    private var session: AVCaptureSession?  // sessionQueue only
+    private let sessionQueue = DispatchQueue(label: "com.hdtext.audio-session")
     private let sampleQueue = DispatchQueue(label: "com.hdtext.audio-capture")
     private(set) var isCapturing = false
     private(set) var currentLevel: Float = 0.0
@@ -14,9 +18,12 @@ final class AudioCaptureEngine: NSObject {
     private var recordedChunks: [Data] = []
     private let chunksLock = NSLock()
     private var bufferCount = 0
+    private var accepting = false  // chunksLock; false drops buffers that arrive after stop
     private var startedAt: Date?
 
     var onLevelUpdate: ((Float) -> Void)?
+    /// Called on the main queue if the microphone could not be started.
+    var onCaptureError: ((Error) -> Void)?
 
     private static let outputSettings: [String: Any] = [
         AVFormatIDKey: kAudioFormatLinearPCM,
@@ -41,70 +48,42 @@ final class AudioCaptureEngine: NSObject {
         }
     }
 
+    /// Returns immediately; the session starts on a background queue (errors go to `onCaptureError`).
     func startCapture(deviceID: String? = nil) throws {
         guard !isCapturing else { return }
-
-        stopCapture()
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .denied, .restricted: throw AudioCaptureError.permissionDenied
+        default: break
+        }
 
         chunksLock.lock()
         recordedChunks.removeAll()
         bufferCount = 0
+        accepting = true
         chunksLock.unlock()
 
-        guard let device = Self.captureDevice(forUID: deviceID) else {
-            throw AudioCaptureError.noInputDevice
+        startedAt = Date()
+        isCapturing = true
+        sessionQueue.async { [weak self] in
+            self?.startSession(deviceID: deviceID)
         }
-
-        let input: AVCaptureDeviceInput
-        do {
-            input = try AVCaptureDeviceInput(device: device)
-        } catch {
-            if AVCaptureDevice.authorizationStatus(for: .audio) != .authorized {
-                throw AudioCaptureError.permissionDenied
-            }
-            throw AudioCaptureError.captureFailed(error.localizedDescription)
-        }
-
-        let output = AVCaptureAudioDataOutput()
-        output.audioSettings = Self.outputSettings
-        output.setSampleBufferDelegate(self, queue: sampleQueue)
-
-        let session = AVCaptureSession()
-        session.beginConfiguration()
-        guard session.canAddInput(input), session.canAddOutput(output) else {
-            session.commitConfiguration()
-            throw AudioCaptureError.captureFailed("Could not attach \(device.localizedName)")
-        }
-        session.addInput(input)
-        session.addOutput(output)
-        session.commitConfiguration()
-
-        NotificationCenter.default.addObserver(self, selector: #selector(sessionRuntimeError(_:)),
-                                               name: AVCaptureSession.runtimeErrorNotification, object: session)
-        session.startRunning()
-        hdLog("Capture started — \(device.localizedName)")
-
-        self.session = session
-        self.startedAt = Date()
-        self.isCapturing = true
     }
 
     @discardableResult
     func stopCapture() -> Data {
-        if let session {
-            session.stopRunning()
-            NotificationCenter.default.removeObserver(self, name: AVCaptureSession.runtimeErrorNotification, object: session)
-            self.session = nil
-            sampleQueue.sync {}  // deliver buffers already in flight
-        }
-        isCapturing = false
-        currentLevel = 0
-
         chunksLock.lock()
+        accepting = false
         let allChunks = recordedChunks
         let buffers = bufferCount
         recordedChunks.removeAll()
+        bufferCount = 0
         chunksLock.unlock()
+
+        if isCapturing {
+            sessionQueue.async { [weak self] in self?.stopSession() }
+        }
+        isCapturing = false
+        currentLevel = 0
 
         var combined = Data()
         for chunk in allChunks {
@@ -114,12 +93,60 @@ final class AudioCaptureEngine: NSObject {
         hdLog("Audio stopped — \(combined.count) bytes (\(String(format: "%.2f", seconds)) s) from \(buffers) buffers")
         if let startedAt {
             let elapsed = Date().timeIntervalSince(startedAt)
-            if elapsed > 1, seconds < elapsed * 0.6 {
+            if elapsed > 1.5, seconds < elapsed * 0.6 {
                 hdLogWarning(String(format: "Microphone delivered only %.2f s of audio in %.2f s of recording", seconds, elapsed))
             }
         }
         startedAt = nil
         return combined
+    }
+
+    private func startSession(deviceID: String?) {
+        stopSession()
+        do {
+            guard let device = Self.captureDevice(forUID: deviceID) else {
+                throw AudioCaptureError.noInputDevice
+            }
+            let input: AVCaptureDeviceInput
+            do {
+                input = try AVCaptureDeviceInput(device: device)
+            } catch {
+                if AVCaptureDevice.authorizationStatus(for: .audio) != .authorized {
+                    throw AudioCaptureError.permissionDenied
+                }
+                throw AudioCaptureError.captureFailed(error.localizedDescription)
+            }
+
+            let output = AVCaptureAudioDataOutput()
+            output.audioSettings = Self.outputSettings
+            output.setSampleBufferDelegate(self, queue: sampleQueue)
+
+            let session = AVCaptureSession()
+            session.beginConfiguration()
+            guard session.canAddInput(input), session.canAddOutput(output) else {
+                session.commitConfiguration()
+                throw AudioCaptureError.captureFailed("Could not attach \(device.localizedName)")
+            }
+            session.addInput(input)
+            session.addOutput(output)
+            session.commitConfiguration()
+
+            NotificationCenter.default.addObserver(self, selector: #selector(sessionRuntimeError(_:)),
+                                                   name: AVCaptureSession.runtimeErrorNotification, object: session)
+            session.startRunning()
+            self.session = session
+            hdLog("Capture started — \(device.localizedName)")
+        } catch {
+            hdLogWarning("Microphone failed to start: \(error.localizedDescription)")
+            DispatchQueue.main.async { [weak self] in self?.onCaptureError?(error) }
+        }
+    }
+
+    private func stopSession() {
+        guard let session else { return }
+        session.stopRunning()
+        NotificationCenter.default.removeObserver(self, name: AVCaptureSession.runtimeErrorNotification, object: session)
+        self.session = nil
     }
 
     /// The device with this CoreAudio UID (AVCaptureDevice.uniqueID matches it on macOS), else the system default.
@@ -187,11 +214,14 @@ extension AudioCaptureEngine: AVCaptureAudioDataOutputSampleBufferDelegate {
         guard status == kCMBlockBufferNoErr else { return }
 
         chunksLock.lock()
-        recordedChunks.append(chunk)
-        bufferCount += 1
+        let keep = accepting
+        if keep {
+            recordedChunks.append(chunk)
+            bufferCount += 1
+        }
         chunksLock.unlock()
 
-        updateLevel(from: chunk)
+        if keep { updateLevel(from: chunk) }
     }
 }
 

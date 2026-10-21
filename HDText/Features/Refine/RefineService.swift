@@ -26,7 +26,8 @@ final class RefineService {
             parts: [.text(trimmed)],
             options: GeminiGenerationOptions(
                 temperature: 0.7,
-                thinkingLevel: GeminiModelCatalog.thinkingLevel(forAPIName: modelName)))
+                thinkingLevel: GeminiModelCatalog.thinkingLevel(forAPIName: modelName),
+                responseField: "rewritten_text"))
     }
 }
 

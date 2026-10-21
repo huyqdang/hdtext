@@ -191,6 +191,10 @@ final class CalibrationViewModel: ObservableObject {
                 self?.currentLevel = level
             }
         }
+        engine.onCaptureError = { [weak self] error in
+            self?.isCalibrating = false
+            self?.calibrationResult = "Microphone error: \(error.localizedDescription)"
+        }
 
         do {
             try engine.startCapture(deviceID: appState.selectedMicrophoneID)

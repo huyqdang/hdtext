@@ -43,6 +43,24 @@ final class GeminiTranscriptionServiceTests: XCTestCase {
         StubURLProtocol.reset()
     }
 
+    func testTranscriptionRequestsJSONFieldAndReturnsOnlyThatField() async throws {
+        // gemini-3.8-flash sometimes writes its reasoning into the reply; JSON mode confines the answer to one field.
+        let reply = #"{\"cleaned_text\": \"I think Marion is now fully finished.\\n\\nCan you redesign her a little bit?\"}"#
+        StubURLProtocol.reset()
+        StubURLProtocol.responses = [(200, Data(#"{"candidates":[{"content":{"parts":[{"text":"\#(reply)"}]}}]}"#.utf8))]
+        let service = GeminiTranscriptionService(client: GeminiClient(session: StubURLProtocol.makeSession()))
+
+        let text = try await service.transcribeAndClean(
+            audioData: Data(repeating: 1, count: 3200), modelName: "gemini-3.8-flash", apiKey: "k")
+
+        XCTAssertEqual(text, "I think Marion is now fully finished.\n\nCan you redesign her a little bit?")
+        let gen = StubURLProtocol.bodyJSON(of: try XCTUnwrap(StubURLProtocol.requests.first))["generationConfig"] as? [String: Any]
+        XCTAssertEqual(gen?["responseMimeType"] as? String, "application/json")
+        let properties = (gen?["responseSchema"] as? [String: Any])?["properties"] as? [String: Any]
+        XCTAssertNotNil(properties?["cleaned_text"])
+        StubURLProtocol.reset()
+    }
+
     func testPhantomFilterKeepsRealSentencesAndRejectsExactPhrase() async throws {
         StubURLProtocol.reset()
         StubURLProtocol.responses = [

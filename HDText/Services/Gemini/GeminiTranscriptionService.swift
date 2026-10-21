@@ -88,7 +88,8 @@ final class GeminiTranscriptionService {
                 parts: [.inlineData(mimeType: "audio/wav", data: wavData), .text("Transcribe.")],
                 options: GeminiGenerationOptions(
                     temperature: 0.2,
-                    thinkingLevel: GeminiModelCatalog.thinkingLevel(forAPIName: modelName)))
+                    thinkingLevel: GeminiModelCatalog.thinkingLevel(forAPIName: modelName),
+                    responseField: "cleaned_text"))
         } catch GeminiAPIError.emptyResponse {
             throw TranscriptionError.noSpeechDetected
         }

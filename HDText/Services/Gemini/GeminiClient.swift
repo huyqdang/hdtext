@@ -41,6 +41,9 @@ struct GeminiGenerationOptions: Equatable {
     var temperature: Double
     var maxOutputTokens: Int? = nil
     var thinkingLevel: String? = nil
+    /// When set, the reply is constrained to JSON `{ <field>: string }` and only that field is returned.
+    /// Flash models sometimes write their reasoning into a free-text reply; JSON mode leaves no room for it.
+    var responseField: String? = nil
 }
 
 /// Minimal REST client for the Gemini Developer API (generateContent + models list).
@@ -70,15 +73,30 @@ final class GeminiClient {
         options: GeminiGenerationOptions
     ) async throws -> String {
         let wantsThinking = options.thinkingLevel != nil && !rejectsThinking(model)
+        let text: String
         do {
-            return try await send(model: model, apiKey: apiKey, systemPrompt: systemPrompt,
+            text = try await send(model: model, apiKey: apiKey, systemPrompt: systemPrompt,
                                   parts: parts, options: options, includeThinking: wantsThinking)
         } catch GeminiAPIError.badRequest(let message) where wantsThinking && message.lowercased().contains("thinking") {
             hdLog("Model \(model) rejected thinkingConfig — retrying without it")
             thinkingLock.withLock { _ = modelsWithoutThinking.insert(model) }
-            return try await send(model: model, apiKey: apiKey, systemPrompt: systemPrompt,
+            text = try await send(model: model, apiKey: apiKey, systemPrompt: systemPrompt,
                                   parts: parts, options: options, includeThinking: false)
         }
+        guard let field = options.responseField else { return text }
+        return try Self.jsonField(field, in: text, model: model)
+    }
+
+    static func jsonField(_ field: String, in text: String, model: String) throws -> String {
+        if let data = text.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let value = object[field] as? String {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { throw GeminiAPIError.emptyResponse }
+            return trimmed
+        }
+        hdLogWarning("Model \(model) reply was not the requested JSON (\(text.count) chars) — using it as-is")
+        return text
     }
 
     func listModels(apiKey: String) async throws -> [String] {
@@ -159,6 +177,14 @@ final class GeminiClient {
         }
         if includeThinking, let level = options.thinkingLevel {
             generationConfig["thinkingConfig"] = ["thinkingLevel": level]
+        }
+        if let field = options.responseField {
+            generationConfig["responseMimeType"] = "application/json"
+            generationConfig["responseSchema"] = [
+                "type": "OBJECT",
+                "properties": [field: ["type": "STRING", "description": "The final text only, after applying every rule. No notes, drafts, or reasoning."]],
+                "required": [field],
+            ]
         }
         body["generationConfig"] = generationConfig
         return body

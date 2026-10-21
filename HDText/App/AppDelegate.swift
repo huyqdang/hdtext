@@ -236,6 +236,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Dictation Pipeline
 
     private func setupDictationPipeline() {
+        appState.audioCaptureEngine.onCaptureError = { [weak self] error in
+            guard let self, self.appState.mode == .listening else { return }
+            _ = self.appState.audioCaptureEngine.stopCapture()
+            self.appState.isLockMode = false
+            self.lockActivationReleasePending = false
+            self.appState.errorLog.log("Audio capture failed", detail: error.localizedDescription)
+            self.showTemporaryError("Microphone: \(error.localizedDescription)")
+        }
         NotificationCenter.default.addObserver(self, selector: #selector(handleDictationStart),
                                                name: .hdtextDictationStart, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleDictationEnd),
