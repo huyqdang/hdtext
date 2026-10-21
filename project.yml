@@ -48,6 +48,8 @@ targets:
       - package: GoogleGenerativeAI
     entitlements:
       path: HDText/Resources/HDText.entitlements
+      properties:
+        com.apple.security.device.audio-input: true
 
   HDTextTests:
     type: bundle.unit-test
