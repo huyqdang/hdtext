@@ -1,15 +1,85 @@
 import AppKit
 import ApplicationServices
 
-final class TextInsertionService {
-    func insertText(_ text: String) -> Bool {
-        guard let focusedElement = getFocusedElement() else { return false }
+/// All items/types on a pasteboard, so a paste can put the user's clipboard back exactly.
+struct PasteboardSnapshot {
+    let items: [[NSPasteboard.PasteboardType: Data]]
 
-        if setAXValue(focusedElement, text: text) {
-            return true
+    static func capture(_ pasteboard: NSPasteboard) -> PasteboardSnapshot {
+        let items = (pasteboard.pasteboardItems ?? []).compactMap { item -> [NSPasteboard.PasteboardType: Data]? in
+            var dict: [NSPasteboard.PasteboardType: Data] = [:]
+            for type in item.types {
+                if let data = item.data(forType: type) { dict[type] = data }
+            }
+            return dict.isEmpty ? nil : dict
+        }
+        return PasteboardSnapshot(items: items)
+    }
+
+    func write(to pasteboard: NSPasteboard) {
+        pasteboard.clearContents()
+        guard !items.isEmpty else { return }
+        let objects: [NSPasteboardItem] = items.map { typeMap in
+            let item = NSPasteboardItem()
+            for (type, data) in typeMap { item.setData(data, forType: type) }
+            return item
+        }
+        pasteboard.writeObjects(objects)
+    }
+}
+
+final class TextInsertionService {
+    private let pasteboard: NSPasteboard
+    private let activationDelay: TimeInterval = 0.25
+    private let restoreDelay: TimeInterval = 0.8
+
+    init(pasteboard: NSPasteboard = .general) {
+        self.pasteboard = pasteboard
+    }
+
+    /// Puts `text` on the clipboard, activates `app`, sends ⌘V, then restores the previous
+    /// clipboard if nothing else has changed it in the meantime.
+    func paste(_ text: String, into app: NSRunningApplication?, completion: (() -> Void)? = nil) {
+        let snapshot = PasteboardSnapshot.capture(pasteboard)
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        let ourChangeCount = pasteboard.changeCount
+
+        if let app {
+            app.activate()
+            hdLog("Reactivated: \(app.localizedName ?? "?")")
         }
 
-        return pasteViaClipboard(text)
+        let pasteboard = self.pasteboard
+        let restoreDelay = self.restoreDelay
+        DispatchQueue.main.asyncAfter(deadline: .now() + activationDelay) {
+            Self.postCommandKey(0x09)
+            hdLog("Pasted via Cmd+V")
+            completion?()
+            DispatchQueue.main.asyncAfter(deadline: .now() + restoreDelay) {
+                Self.restore(snapshot, to: pasteboard, ifChangeCountIs: ourChangeCount)
+            }
+        }
+    }
+
+    @discardableResult
+    static func restore(_ snapshot: PasteboardSnapshot, to pasteboard: NSPasteboard, ifChangeCountIs expected: Int) -> Bool {
+        guard pasteboard.changeCount == expected else {
+            hdLog("Clipboard changed since paste — not restoring")
+            return false
+        }
+        snapshot.write(to: pasteboard)
+        return true
+    }
+
+    static func postCommandKey(_ virtualKey: CGKeyCode) {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        guard let down = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: false) else { return }
+        down.flags = .maskCommand
+        up.flags = .maskCommand
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
     }
 
     static func frontmostAppName() -> String {
@@ -24,85 +94,5 @@ final class TextInsertionService {
     static func requestAccessibilityPermission() {
         let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue(): true] as CFDictionary
         AXIsProcessTrustedWithOptions(options)
-    }
-
-    private func getFocusedElement() -> AXUIElement? {
-        let systemWide = AXUIElementCreateSystemWide()
-
-        var focusedApp: AnyObject?
-        let appResult = AXUIElementCopyAttributeValue(
-            systemWide,
-            kAXFocusedApplicationAttribute as CFString,
-            &focusedApp
-        )
-        guard appResult == .success else { return nil }
-
-        var focusedElement: AnyObject?
-        let elementResult = AXUIElementCopyAttributeValue(
-            focusedApp as! AXUIElement,
-            kAXFocusedUIElementAttribute as CFString,
-            &focusedElement
-        )
-        guard elementResult == .success else { return nil }
-
-        return (focusedElement as! AXUIElement)
-    }
-
-    private func setAXValue(_ element: AXUIElement, text: String) -> Bool {
-        var selectedRange: AnyObject?
-        _ = AXUIElementCopyAttributeValue(
-            element,
-            kAXSelectedTextRangeAttribute as CFString,
-            &selectedRange
-        )
-
-        let textValue = text as CFTypeRef
-        let setResult = AXUIElementSetAttributeValue(
-            element,
-            kAXSelectedTextAttribute as CFString,
-            textValue
-        )
-
-        if setResult == .success {
-            return true
-        }
-
-        let valueResult = AXUIElementSetAttributeValue(
-            element,
-            kAXValueAttribute as CFString,
-            textValue
-        )
-
-        return valueResult == .success
-    }
-
-    private func pasteViaClipboard(_ text: String) -> Bool {
-        let pasteboard = NSPasteboard.general
-        let previousContents = pasteboard.string(forType: .string)
-
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
-
-        let source = CGEventSource(stateID: .combinedSessionState)
-
-        guard let keyDownEvent = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true),
-              let keyUpEvent = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false) else {
-            return false
-        }
-
-        keyDownEvent.flags = .maskCommand
-        keyUpEvent.flags = .maskCommand
-
-        keyDownEvent.post(tap: .cghidEventTap)
-        keyUpEvent.post(tap: .cghidEventTap)
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            if let previous = previousContents {
-                pasteboard.clearContents()
-                pasteboard.setString(previous, forType: .string)
-            }
-        }
-
-        return true
     }
 }

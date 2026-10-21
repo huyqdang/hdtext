@@ -1,32 +1,50 @@
 import XCTest
+import AppKit
 @testable import HDText
 
 final class TextInsertionServiceTests: XCTestCase {
-    private var service: TextInsertionService!
+    private var pasteboard: NSPasteboard!
+    private let customType = NSPasteboard.PasteboardType("com.hdtext.tests.custom")
 
     override func setUp() {
         super.setUp()
-        service = TextInsertionService()
+        pasteboard = NSPasteboard(name: NSPasteboard.Name("com.hdtext.tests.\(UUID().uuidString)"))
     }
 
     override func tearDown() {
-        service = nil
+        pasteboard.releaseGlobally()
+        pasteboard = nil
         super.tearDown()
     }
 
-    func testFrontmostAppNameReturnsString() {
-        let name = TextInsertionService.frontmostAppName()
-        XCTAssertFalse(name.isEmpty)
+    func testRestoreBringsBackAllOriginalTypes() {
+        let item = NSPasteboardItem()
+        item.setString("original", forType: .string)
+        item.setData(Data([9, 8, 7]), forType: customType)
+        pasteboard.clearContents()
+        pasteboard.writeObjects([item])
+
+        let snapshot = PasteboardSnapshot.capture(pasteboard)
+        pasteboard.clearContents()
+        pasteboard.setString("dictated", forType: .string)
+
+        XCTAssertTrue(TextInsertionService.restore(snapshot, to: pasteboard, ifChangeCountIs: pasteboard.changeCount))
+        XCTAssertEqual(pasteboard.string(forType: .string), "original")
+        XCTAssertEqual(pasteboard.data(forType: customType), Data([9, 8, 7]))
     }
 
-    func testCheckAccessibilityPermissionReturnsBool() {
-        let result = TextInsertionService.checkAccessibilityPermission()
-        XCTAssertNotNil(result)
-    }
+    func testRestoreSkippedWhenUserCopiedSomethingNewer() {
+        pasteboard.clearContents()
+        pasteboard.setString("original", forType: .string)
+        let snapshot = PasteboardSnapshot.capture(pasteboard)
 
-    func testInsertTextReturnsBoolResult() {
-        let result = service.insertText("Test text")
-        // May return false without accessibility permission, but must not crash
-        XCTAssertNotNil(result)
+        pasteboard.clearContents()
+        pasteboard.setString("dictated", forType: .string)
+        let ours = pasteboard.changeCount
+        pasteboard.clearContents()
+        pasteboard.setString("user copied", forType: .string)
+
+        XCTAssertFalse(TextInsertionService.restore(snapshot, to: pasteboard, ifChangeCountIs: ours))
+        XCTAssertEqual(pasteboard.string(forType: .string), "user copied")
     }
 }

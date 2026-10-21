@@ -28,7 +28,7 @@ struct HistoryDetailView: View {
                                 NSPasteboard.general.setString(record.cleanedText, forType: .string)
                             }
                             Button("Re-insert") {
-                                _ = appState.textInsertionService.insertText(record.cleanedText)
+                                appState.textInsertionService.paste(record.cleanedText, into: nil)
                             }
                         }
                         .buttonStyle(.borderless)
