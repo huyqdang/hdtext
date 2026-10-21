@@ -75,6 +75,7 @@ Build and run the `HDText` target.
 - **Hotkey stops working after installing a new build:** click the menu bar icon and choose **Accessibility: NOT GRANTED — click to reset & re-grant**.
 - **"Model … isn't available":** choose a different model in **Settings › Models**.
 - **Check your API key:** use **Settings › API Key › Test Key**.
+- **Transcripts cut off after the first word or two:** run `./scripts/mic-check.sh`. It records 4 s from each microphone and reports any device that stops delivering audio early.
 
 ## Project Structure
 

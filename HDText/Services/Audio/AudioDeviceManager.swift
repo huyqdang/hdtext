@@ -65,21 +65,6 @@ enum AudioDeviceManager {
         availableInputDevices().first { $0.uid == uid }
     }
 
-    static func setInputDevice(_ device: AudioDevice, on engine: AVAudioEngine) {
-        var deviceID = device.id
-        let status = AudioUnitSetProperty(
-            engine.inputNode.audioUnit!,
-            kAudioOutputUnitProperty_CurrentDevice,
-            kAudioUnitScope_Global,
-            0,
-            &deviceID,
-            UInt32(MemoryLayout<AudioDeviceID>.size)
-        )
-        if status != noErr {
-            print("Failed to set input device: \(status)")
-        }
-    }
-
     private static func hasInputStreams(_ deviceID: AudioDeviceID) -> Bool {
         var propertyAddress = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyStreamConfiguration,
