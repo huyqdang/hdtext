@@ -63,6 +63,10 @@ final class AudioCaptureEngine {
             throw AudioCaptureError.noInputDevice
         }
 
+        guard let resampler = PCM16Resampler(inputFormat: hwFormat) else {
+            throw AudioCaptureError.tapInstallFailed("Could not create 16 kHz converter")
+        }
+
         var tapCallCount = 0
         let tapBlock: AVAudioNodeTapBlock = { [weak self] buffer, _ in
             guard let self = self else { return }
@@ -71,7 +75,7 @@ final class AudioCaptureEngine {
                 hdLog("Audio tap #\(tapCallCount) — \(buffer.frameLength) frames, \(buffer.format.sampleRate) Hz")
             }
             self.updateLevel(from: buffer)
-            if let data = self.convertToInt16PCM(buffer: buffer) {
+            if let data = resampler.convert(buffer) {
                 self.chunksLock.lock()
                 self.recordedChunks.append(data)
                 self.chunksLock.unlock()
@@ -122,59 +126,6 @@ final class AudioCaptureEngine {
         return combined
     }
 
-    private func convertToInt16PCM(buffer: AVAudioPCMBuffer) -> Data? {
-        guard let channelData = buffer.floatChannelData else { return nil }
-        let frameLength = Int(buffer.frameLength)
-        guard frameLength > 0 else { return nil }
-
-        let channelCount = Int(buffer.format.channelCount)
-        let srcRate = buffer.format.sampleRate
-        let targetRate = 16000.0
-
-        var monoSamples = [Float](repeating: 0, count: frameLength)
-        if channelCount > 1 {
-            for i in 0..<frameLength {
-                var sum: Float = 0
-                for ch in 0..<channelCount {
-                    sum += channelData[ch][i]
-                }
-                monoSamples[i] = sum / Float(channelCount)
-            }
-        } else {
-            memcpy(&monoSamples, channelData[0], frameLength * MemoryLayout<Float>.size)
-        }
-
-        let resampledSamples: [Float]
-        if abs(srcRate - targetRate) > 1.0 {
-            let ratio = targetRate / srcRate
-            let outputLength = Int(Double(frameLength) * ratio)
-            guard outputLength > 0 else { return nil }
-
-            var output = [Float](repeating: 0, count: outputLength)
-            for i in 0..<outputLength {
-                let srcIndex = Double(i) / ratio
-                let idx = Int(srcIndex)
-                let frac = Float(srcIndex - Double(idx))
-                if idx + 1 < frameLength {
-                    output[i] = monoSamples[idx] * (1 - frac) + monoSamples[idx + 1] * frac
-                } else if idx < frameLength {
-                    output[i] = monoSamples[idx]
-                }
-            }
-            resampledSamples = output
-        } else {
-            resampledSamples = monoSamples
-        }
-
-        var int16Samples = [Int16](repeating: 0, count: resampledSamples.count)
-        for i in 0..<resampledSamples.count {
-            let clamped = max(-1.0, min(1.0, resampledSamples[i]))
-            int16Samples[i] = Int16(clamped * 32767)
-        }
-
-        return Data(bytes: int16Samples, count: int16Samples.count * MemoryLayout<Int16>.size)
-    }
-
     private func updateLevel(from buffer: AVAudioPCMBuffer) {
         guard let channelData = buffer.floatChannelData else { return }
         let frames = buffer.frameLength
@@ -211,6 +162,46 @@ final class AudioCaptureEngine {
         let rms = computeRMS(of: pcmData)
         hdLog("Audio RMS: \(rms) (threshold: \(threshold))")
         return rms < threshold
+    }
+}
+
+/// Streams capture buffers into 16 kHz mono Int16 PCM with proper anti-aliased resampling.
+final class PCM16Resampler {
+    private let converter: AVAudioConverter
+    private let outputFormat: AVAudioFormat
+
+    init?(inputFormat: AVAudioFormat, targetSampleRate: Double = 16000) {
+        guard let output = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: targetSampleRate,
+                                         channels: 1, interleaved: true),
+              let converter = AVAudioConverter(from: inputFormat, to: output) else { return nil }
+        converter.downmix = true
+        self.converter = converter
+        self.outputFormat = output
+    }
+
+    func convert(_ buffer: AVAudioPCMBuffer) -> Data? {
+        guard buffer.frameLength > 0 else { return nil }
+        let ratio = outputFormat.sampleRate / buffer.format.sampleRate
+        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 64
+        guard let out = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: capacity) else { return nil }
+
+        var supplied = false
+        var error: NSError?
+        let status = converter.convert(to: out, error: &error) { _, inputStatus in
+            if supplied {
+                inputStatus.pointee = .noDataNow
+                return nil
+            }
+            supplied = true
+            inputStatus.pointee = .haveData
+            return buffer
+        }
+        if status == .error {
+            hdLog("Resampler error: \(error?.localizedDescription ?? "unknown")")
+            return nil
+        }
+        guard out.frameLength > 0, let channel = out.int16ChannelData else { return nil }
+        return Data(bytes: channel[0], count: Int(out.frameLength) * MemoryLayout<Int16>.size)
     }
 }
 
