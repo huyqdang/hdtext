@@ -22,6 +22,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var doubleTapTimer: Timer?
     private var lockExitTapTime: Date?
     private var lockActivationReleasePending = false
+    private var selectionLookupToken: UUID?
+
+    private var transcriptionTask: Task<Void, Never>?
+    private var dictationSession = UUID()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         menuBarController = MenuBarController(appState: appState)
@@ -149,8 +153,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         listeningTimer = nil
         appState.hotkeyManager.resetHoldState()
         _ = appState.audioCaptureEngine.stopCapture()
+        transcriptionTask?.cancel()
+        transcriptionTask = nil
+        dictationSession = UUID()
+        selectionLookupToken = nil
         appState.isLockMode = false
         lockActivationReleasePending = false
+        lockExitTapTime = nil
+        lastTapEndTime = nil
+        doubleTapTimer?.invalidate()
+        doubleTapTimer = nil
         appState.mode = .idle
         appState.roughTranscript = ""
         appState.errorMessage = nil
@@ -201,7 +213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func completeOnboarding() {
         appState.isOnboardingComplete = true
         onboardingWindow?.close()
-        onboardingWindow = nil
+        DispatchQueue.main.async { [weak self] in self?.onboardingWindow = nil }
         ensureAccessibilityThenStart()
     }
 
@@ -246,6 +258,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func handleDictationStart(_ notification: Notification) {
         hdLog("handleDictationStart")
         dictationStartTime = Date()
+        selectionLookupToken = nil
 
         if appState.isLockMode {
             // In lock mode — this tap might be to exit
@@ -309,22 +322,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             cancelCapture()
+            armDoubleTapTimer()
             hdLog("Quick tap detected (\(Int(holdDuration * 1000))ms) — looking for selected text")
 
-            if let selectedText = getSelectedTextViaAX(), !selectedText.isEmpty {
-                hdLog("AX selected text found (\(selectedText.count) chars) — showing refine")
-                showRefineActionPicker(for: selectedText)
+            if let axText = getSelectedTextViaAX() {
+                if axText.isEmpty {
+                    hdLog("AX reports no selection")
+                } else {
+                    hdLog("AX selected text found (\(axText.count) chars) — showing refine")
+                    showRefineActionPicker(for: axText)
+                }
                 return
             }
 
+            let token = UUID()
+            selectionLookupToken = token
             attemptSelectedTextViaClipboard { [weak self] text in
-                guard let self = self else { return }
+                guard let self = self,
+                      self.selectionLookupToken == token,
+                      self.appState.mode == .idle,
+                      !self.appState.isLockMode else { return }
+                self.selectionLookupToken = nil
                 if let text, !text.isEmpty {
                     hdLog("Clipboard selected text found (\(text.count) chars) — showing refine")
                     self.showRefineActionPicker(for: text)
                 } else {
                     hdLog("No selected text from AX or clipboard")
-                    self.armDoubleTapTimer()
                 }
             }
             return
@@ -345,6 +368,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard appState.mode == .idle || appState.isLockMode else { return }
 
         guard appState.hasAPIKey else {
+            appState.isLockMode = false
+            lockActivationReleasePending = false
             appState.errorLog.log("No API key configured")
             showTemporaryError("No API key configured. Open Settings > API Key.")
             return
@@ -366,6 +391,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try appState.audioCaptureEngine.startCapture(deviceID: appState.selectedMicrophoneID)
             hdLog("Audio capture started OK")
         } catch {
+            appState.isLockMode = false
+            lockActivationReleasePending = false
             appState.errorLog.log("Audio capture failed", detail: error.localizedDescription)
             showTemporaryError("Microphone: \(error.localizedDescription)")
         }
@@ -388,6 +415,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// nil = AX could not answer (use the clipboard fallback); "" = AX answered, nothing selected.
     private func getSelectedTextViaAX() -> String? {
         guard AXIsProcessTrusted() else {
             hdLog("getSelectedTextViaAX: Accessibility not trusted")
@@ -414,19 +442,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let snapshot = PasteboardSnapshot.capture(pasteboard)
         let originalChangeCount = pasteboard.changeCount
 
+        let deadline = Date().addingTimeInterval(0.4)
+
         TextInsertionService.postCommandKey(0x08)
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            guard pasteboard.changeCount != originalChangeCount else {
+        func poll() {
+            if pasteboard.changeCount != originalChangeCount {
+                let copied = pasteboard.string(forType: .string)
+                TextInsertionService.restore(snapshot, to: pasteboard, ifChangeCountIs: pasteboard.changeCount)
+                completion(copied)
+                return
+            }
+            guard Date() < deadline else {
                 hdLog("Clipboard fallback: changeCount unchanged — no selection copied")
                 completion(nil)
                 return
             }
-            let copied = pasteboard.string(forType: .string)
-            let copiedChangeCount = pasteboard.changeCount
-            TextInsertionService.restore(snapshot, to: pasteboard, ifChangeCountIs: copiedChangeCount)
-            completion(copied)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { poll() }
         }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { poll() }
     }
 
     private func showRefineActionPicker(for text: String) {
@@ -509,7 +543,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         hdLog("Starting transcribe+clean with \(audioData.count) bytes...")
 
-        Task {
+        let session = UUID()
+        dictationSession = session
+        let targetApp = sourceApp
+
+        transcriptionTask = Task {
             do {
                 let cleaned = try await appState.geminiTranscriptionService.transcribeAndClean(
                     audioData: audioData,
@@ -521,27 +559,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 hdLog("Result: \(cleaned)")
 
                 await MainActor.run {
+                    guard session == self.dictationSession, !Task.isCancelled else { return }
+                    self.transcriptionTask = nil
                     appState.cleanedText = cleaned
                     appState.roughTranscript = cleaned
 
                     let record = TranscriptionRecord(
                         roughTranscript: cleaned, cleanedText: cleaned,
-                        targetApp: self.sourceApp?.localizedName ?? "Unknown"
+                        targetApp: targetApp?.localizedName ?? "Unknown"
                     )
                     appState.historyStore.save(record)
                     appState.mode = .idle
 
-                    appState.textInsertionService.paste(cleaned, into: self.sourceApp) { [weak self] in
+                    appState.textInsertionService.paste(cleaned, into: targetApp) { [weak self] in
                         self?.playSound("Glass")
                     }
                 }
             } catch let error as TranscriptionError where error == .noSpeechDetected {
                 await MainActor.run {
+                    guard session == self.dictationSession, !Task.isCancelled else { return }
+                    self.transcriptionTask = nil
                     appState.errorLog.log("No speech detected by model", level: .warning)
                     showTemporaryError("No speech detected. Try speaking louder.")
                 }
             } catch {
                 await MainActor.run {
+                    guard session == self.dictationSession, !Task.isCancelled else { return }
+                    self.transcriptionTask = nil
                     appState.errorLog.log("Transcription failed", detail: error.localizedDescription)
                     appState.mode = .error
                     appState.errorMessage = error.localizedDescription
