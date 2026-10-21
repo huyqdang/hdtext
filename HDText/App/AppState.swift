@@ -15,6 +15,7 @@ final class AppState: ObservableObject {
     @Published var roughTranscript: String = ""
     @Published var cleanedText: String = ""
     @Published var errorMessage: String?
+    @Published private(set) var apiKey: String? = nil
 
     @Published var isOnboardingComplete: Bool {
         didSet { UserDefaults.standard.set(isOnboardingComplete, forKey: "isOnboardingComplete") }
@@ -57,21 +58,23 @@ final class AppState: ObservableObject {
     let hotkeyManager: HotkeyManager
     let audioCaptureEngine: AudioCaptureEngine
     let geminiTranscriptionService: GeminiTranscriptionService
-    let geminiRewriteService: GeminiRewriteService
     let textInsertionService: TextInsertionService
     let historyStore: HistoryStore
     let keychainStore: KeychainStore
-    let refineService: RefineService
 
     var transcriptionModelAPIName: String {
-        GeminiModelCatalog.apiName(forID: selectedTranscriptionModelID, fallback: "gemini-2.5-flash")
+        GeminiModelCatalog.apiName(
+            forID: selectedTranscriptionModelID,
+            fallback: GeminiModelCatalog.apiName(forID: GeminiModelCatalog.defaultTranscriptionID, fallback: "gemini-3.5-flash-lite"))
     }
 
     var rewriteModelAPIName: String {
-        GeminiModelCatalog.apiName(forID: selectedRewriteModelID, fallback: "gemini-2.5-flash")
+        GeminiModelCatalog.apiName(
+            forID: selectedRewriteModelID,
+            fallback: GeminiModelCatalog.apiName(forID: GeminiModelCatalog.defaultTextID, fallback: "gemini-3.8-flash"))
     }
 
-    init() {
+    init(keychainStore: KeychainStore = KeychainStore()) {
         self.isOnboardingComplete = UserDefaults.standard.bool(forKey: "isOnboardingComplete")
         self.isCalibrated = UserDefaults.standard.bool(forKey: "isCalibrated")
         self.selectedMicrophoneID = UserDefaults.standard.string(forKey: "selectedMicrophoneID")
@@ -79,27 +82,42 @@ final class AppState: ObservableObject {
         let savedAggressiveness = UserDefaults.standard.string(forKey: "rewriteAggressiveness") ?? ""
         self.rewriteAggressiveness = RewriteAggressiveness(rawValue: savedAggressiveness) ?? .balanced
 
-        self.selectedTranscriptionModelID = UserDefaults.standard.string(forKey: "selectedTranscriptionModelID")
-            ?? GeminiModelCatalog.defaultTranscriptionID
-        self.selectedRewriteModelID = UserDefaults.standard.string(forKey: "selectedRewriteModelID")
-            ?? GeminiModelCatalog.defaultTextID
+        self.selectedTranscriptionModelID = GeminiModelCatalog.migrate(
+            id: UserDefaults.standard.string(forKey: "selectedTranscriptionModelID"),
+            fallback: GeminiModelCatalog.defaultTranscriptionID)
+        self.selectedRewriteModelID = GeminiModelCatalog.migrate(
+            id: UserDefaults.standard.string(forKey: "selectedRewriteModelID"),
+            fallback: GeminiModelCatalog.defaultTextID)
         self.smartCorrectionEnabled = UserDefaults.standard.object(forKey: "smartCorrectionEnabled") as? Bool ?? true
         self.overlayX = UserDefaults.standard.object(forKey: "overlayX") as? Double ?? -1
         self.overlayY = UserDefaults.standard.object(forKey: "overlayY") as? Double ?? -1
 
         self.errorLog = ErrorLog()
-        self.keychainStore = KeychainStore()
+        self.keychainStore = keychainStore
         self.hotkeyManager = HotkeyManager()
         self.audioCaptureEngine = AudioCaptureEngine()
         self.geminiTranscriptionService = GeminiTranscriptionService()
-        self.geminiRewriteService = GeminiRewriteService()
         self.textInsertionService = TextInsertionService()
         self.historyStore = HistoryStore()
-        self.refineService = RefineService()
+
+        UserDefaults.standard.set(selectedTranscriptionModelID, forKey: "selectedTranscriptionModelID")
+        UserDefaults.standard.set(selectedRewriteModelID, forKey: "selectedRewriteModelID")
+        self.apiKey = keychainStore.retrieveAPIKey()
     }
 
-    var hasAPIKey: Bool {
-        keychainStore.retrieveAPIKey() != nil
+    var hasAPIKey: Bool { apiKey != nil }
+
+    @discardableResult
+    func saveAPIKey(_ raw: String) -> Bool {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, keychainStore.saveAPIKey(trimmed) else { return false }
+        apiKey = trimmed
+        return true
+    }
+
+    func removeAPIKey() {
+        keychainStore.deleteAPIKey()
+        apiKey = nil
     }
 }
 

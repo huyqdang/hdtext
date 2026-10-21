@@ -3,9 +3,13 @@ import XCTest
 
 final class HotkeyManagerTests: XCTestCase {
     private var manager: HotkeyManager!
+    private var savedMods: Any?
+    private var savedKeyCode: Any?
 
     override func setUp() {
         super.setUp()
+        savedMods = UserDefaults.standard.object(forKey: "hotkeyModifiers")
+        savedKeyCode = UserDefaults.standard.object(forKey: "hotkeyKeyCode")
         UserDefaults.standard.removeObject(forKey: "hotkeyModifiers")
         UserDefaults.standard.removeObject(forKey: "hotkeyKeyCode")
         manager = HotkeyManager()
@@ -14,8 +18,10 @@ final class HotkeyManagerTests: XCTestCase {
     override func tearDown() {
         manager.stopMonitoring()
         manager = nil
-        UserDefaults.standard.removeObject(forKey: "hotkeyModifiers")
-        UserDefaults.standard.removeObject(forKey: "hotkeyKeyCode")
+        if let savedMods { UserDefaults.standard.set(savedMods, forKey: "hotkeyModifiers") }
+        else { UserDefaults.standard.removeObject(forKey: "hotkeyModifiers") }
+        if let savedKeyCode { UserDefaults.standard.set(savedKeyCode, forKey: "hotkeyKeyCode") }
+        else { UserDefaults.standard.removeObject(forKey: "hotkeyKeyCode") }
         super.tearDown()
     }
 

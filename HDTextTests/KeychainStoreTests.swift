@@ -6,7 +6,7 @@ final class KeychainStoreTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        store = KeychainStore()
+        store = KeychainStore(service: "com.hdtext.app.tests")
         store.deleteAPIKey()
     }
 

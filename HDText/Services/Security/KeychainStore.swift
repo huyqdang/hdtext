@@ -2,8 +2,12 @@ import Foundation
 import Security
 
 final class KeychainStore {
-    private let serviceName = "com.hdtext.app"
+    private let serviceName: String
     private let apiKeyAccount = "gemini-api-key"
+
+    init(service: String = "com.hdtext.app") {
+        self.serviceName = service
+    }
 
     func saveAPIKey(_ key: String) -> Bool {
         guard let data = key.data(using: .utf8) else { return false }
