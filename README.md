@@ -9,6 +9,10 @@ A native macOS dictation app powered by Gemini AI. Hold a shortcut, speak natura
 3. **Release** the shortcut when done
 4. Gemini transcribes your speech, cleans up the text, and pastes it into the active app
 
+## Floating Record Button
+
+A small translucent mic button floats on screen. Click it to start recording, click again to stop — the cleaned transcript is copied to your clipboard. Drag it anywhere (position is remembered); right-click to hide it, or toggle it from the menu bar (**Show Floating Button**) or Settings › General.
+
 ## Refine Selected Text
 
 Select text in any app, press the hotkey — if text is selected, a refine menu appears:
@@ -32,6 +36,7 @@ The refine window lets you switch actions, pick a model, edit both input and out
 - Hotkey-triggered text refinement with action/model switching
 - Editable preview before replacing text
 - Compact indicator that follows the cursor
+- On-screen floating record button that copies the transcript to the clipboard
 - Selectable microphone input
 - Microphone calibration screen
 - Local transcription history with search, favorites, and export
