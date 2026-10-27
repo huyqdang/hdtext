@@ -228,7 +228,7 @@ struct SettingsView: View {
                 Toggle(isOn: $appState.showFloatingButton) {
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Show floating record button").font(.body)
-                        Text("Click to record, click again to copy the transcript. Drag to move; right-click to hide.")
+                        Text("Click to record, click again to copy the transcript. Drag to move; right-click for options.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }

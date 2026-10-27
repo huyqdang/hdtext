@@ -24,7 +24,7 @@ final class FloatingRecordButtonController: NSObject {
 
         // $publishers emit before the property changes, so use the emitted values, not appState.*.
         Publishers.CombineLatest4(appState.$mode, appState.$recordingOrigin, appState.$lastCopiedAt, appState.$errorMessage)
-            .receive(on: RunLoop.main)
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] mode, origin, copiedAt, error in
                 self?.latest = (mode, origin, copiedAt, error)
                 self?.refreshState()
@@ -32,12 +32,12 @@ final class FloatingRecordButtonController: NSObject {
             .store(in: &cancellables)
 
         appState.$showFloatingButton
-            .receive(on: RunLoop.main)
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] visible in visible ? self?.show() : self?.hide() }
             .store(in: &cancellables)
 
         NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
-            .receive(on: RunLoop.main)
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.keepOnScreen(save: false) }
             .store(in: &cancellables)
     }
@@ -63,15 +63,20 @@ final class FloatingRecordButtonController: NSObject {
         self.panel = panel
         let size = Self.panelSize
         let saved = NSPoint(x: appState.overlayX, y: appState.overlayY)
-        let origin = appState.hasCustomOverlayPosition
-            ? saved
-            : FloatingButtonPlacement.defaultOrigin(size: size, visibleFrame: (NSScreen.main ?? NSScreen.screens[0]).visibleFrame)
+        let origin: NSPoint
+        if appState.hasCustomOverlayPosition {
+            origin = saved
+        } else {
+            guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+            origin = FloatingButtonPlacement.defaultOrigin(size: size, visibleFrame: screen.visibleFrame)
+        }
         panel.setFrameOrigin(FloatingButtonPlacement.clampedOrigin(origin, size: size, visibleFrames: NSScreen.screens.map(\.visibleFrame)))
         panel.orderFrontRegardless()
         refreshState()
     }
 
     private func hide() {
+        model.hovering = false
         panel?.orderOut(nil)
     }
 
@@ -99,6 +104,7 @@ final class FloatingRecordButtonController: NSObject {
         panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.hidesOnDeactivate = false
+        panel.allowsToolTipsWhenApplicationIsInactive = true
         panel.isMovable = false
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
@@ -126,6 +132,7 @@ final class FloatingRecordButtonController: NSObject {
         settingsItem.target = self
         menu.addItem(settingsItem)
         NSMenu.popUpContextMenu(menu, with: event, for: hostView)
+        model.hovering = panel?.frame.contains(NSEvent.mouseLocation) ?? false
     }
 
     @objc private func hideFromMenu() {
@@ -172,6 +179,7 @@ final class FloatingButtonHostView: NSHostingView<FloatingRecordButtonView> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.control) { onRightClick?(event); return }
         dragStart = NSEvent.mouseLocation
         windowStart = window?.frame.origin
         dragging = false
@@ -195,6 +203,7 @@ final class FloatingButtonHostView: NSHostingView<FloatingRecordButtonView> {
             dragging = false
         }
         guard dragStart != nil else { return }
+        if !dragging, event.clickCount > 1 { return }
         if dragging {
             onDragEnded?()
         } else {
@@ -247,6 +256,7 @@ struct FloatingRecordButtonView: View {
         .opacity(model.state == .idle && !model.hovering ? 0.45 : 1)
         .animation(.easeOut(duration: 0.15), value: model.hovering)
         .animation(.easeOut(duration: 0.15), value: model.state)
+        .help(model.state.helpText)
     }
 
     private var fill: Color {

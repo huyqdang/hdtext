@@ -11,7 +11,7 @@ A native macOS dictation app powered by Gemini AI. Hold a shortcut, speak natura
 
 ## Floating Record Button
 
-A small translucent mic button floats on screen. Click it to start recording, click again to stop — the cleaned transcript is copied to your clipboard. Drag it anywhere (position is remembered); right-click to hide it, or toggle it from the menu bar (**Show Floating Button**) or Settings › General.
+A small translucent mic button floats on screen. Click it to start recording, click again to stop — the cleaned transcript is copied to your clipboard. Drag it anywhere (position is remembered); right-click it for options (Hide Button, Settings…), or toggle it from the menu bar (**Show Floating Button**) or Settings › General.
 
 ## Refine Selected Text
 
