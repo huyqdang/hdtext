@@ -148,6 +148,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         let delegate = NSApp.delegate as? AppDelegate
 
+        let floatingItem = NSMenuItem(title: "Show Floating Button", action: #selector(toggleFloatingButton), keyEquivalent: "")
+        floatingItem.target = self
+        floatingItem.state = appState.showFloatingButton ? .on : .off
+        menu.addItem(floatingItem)
+
         let historyItem = NSMenuItem(title: "Transcription History", action: #selector(AppDelegate.menuOpenHistory), keyEquivalent: "h")
         historyItem.target = delegate
         menu.addItem(historyItem)
@@ -165,6 +170,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let quitItem = NSMenuItem(title: "Quit HDText", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quitItem)
     }
+
+    @objc private func toggleFloatingButton() { appState.showFloatingButton.toggle() }
 
     @objc private func resetAccessibility() {
         AccessibilityPermission.resetAndRegrant()

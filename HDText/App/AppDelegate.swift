@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let appState = AppState()
     private var menuBarController: MenuBarController?
     private var overlayController: OverlayPanelController?
+    private var floatingButtonController: FloatingRecordButtonController?
     private var refinePreviewController: RefinePreviewController?
     private var cancellables = Set<AnyCancellable>()
     private var listeningTimer: Timer?
@@ -30,6 +31,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         menuBarController = MenuBarController(appState: appState)
         overlayController = OverlayPanelController(appState: appState)
+        floatingButtonController = FloatingRecordButtonController(
+            appState: appState,
+            onClick: { [weak self] in self?.toggleButtonRecording() },
+            onOpenSettings: { [weak self] in self?.showSettingsWindow() }
+        )
         refinePreviewController = RefinePreviewController()
         setupDictationPipeline()
 
@@ -264,6 +270,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Double-Tap + Hold-to-Talk Logic
 
     @objc private func handleDictationStart(_ notification: Notification) {
+        if appState.recordingOrigin == .button { return }  // the hotkey never touches a button recording
         hdLog("handleDictationStart")
         dictationStartTime = Date()
         selectionLookupToken = nil
@@ -294,6 +301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func handleDictationEnd(_ notification: Notification) {
+        if appState.recordingOrigin == .button { return }  // the hotkey never touches a button recording
         hdLog("handleDictationEnd")
         let holdDuration = dictationStartTime.map { Date().timeIntervalSince($0) } ?? 1.0
 
@@ -371,7 +379,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var sourceApp: NSRunningApplication?
     private var refineActionMenu: NSMenu?
 
-    private func beginCapture() {
+    private func beginCapture(origin: RecordingOrigin = .hotkey) {
         if appState.mode == .processing {
             hdLog("beginCapture: transcription still running — ignoring")
             appState.isLockMode = false
@@ -394,6 +402,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !appState.isLockMode { playSound("Tink") }
 
         appState.mode = .listening
+        appState.recordingOrigin = origin
         appState.roughTranscript = ""
         appState.cleanedText = ""
         appState.errorMessage = nil
@@ -514,9 +523,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
+    // MARK: - Floating Button
+
+    func toggleButtonRecording() {
+        switch appState.mode {
+        case .idle, .error:
+            appState.errorMessage = nil
+            appState.mode = .idle
+            beginCapture(origin: .button)
+        case .listening:
+            guard appState.recordingOrigin == .button else { return }
+            finalizeDictation()
+        case .processing:
+            return
+        }
+    }
+
     // MARK: - Finalize Dictation
 
     private func finalizeDictation() {
+        let origin = appState.recordingOrigin ?? .hotkey
         hdLog("finalizeDictation called — mode=\(appState.mode)")
         listeningTimer?.invalidate()
         listeningTimer = nil
@@ -584,13 +610,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
                     let record = TranscriptionRecord(
                         roughTranscript: cleaned, cleanedText: cleaned,
-                        targetApp: targetApp?.localizedName ?? "Unknown"
+                        targetApp: origin == .button ? "Clipboard" : (targetApp?.localizedName ?? "Unknown")
                     )
                     appState.historyStore.save(record)
                     appState.mode = .idle
 
-                    appState.textInsertionService.paste(cleaned, into: targetApp) { [weak self] in
-                        self?.playSound("Glass")
+                    switch origin {
+                    case .hotkey:
+                        appState.textInsertionService.paste(cleaned, into: targetApp) { [weak self] in
+                            self?.playSound("Glass")
+                        }
+                    case .button:
+                        appState.textInsertionService.copyToClipboard(cleaned)
+                        appState.lastCopiedAt = Date()
+                        playSound("Glass")
+                        hdLog("Copied transcript to clipboard (\(cleaned.count) chars)")
                     }
                 }
             } catch let error as TranscriptionError where error == .noSpeechDetected {

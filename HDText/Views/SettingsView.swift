@@ -224,6 +224,17 @@ struct SettingsView: View {
                 .padding(8)
             }
 
+            GroupBox("Floating Record Button") {
+                Toggle(isOn: $appState.showFloatingButton) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Show floating record button").font(.body)
+                        Text("Click to record, click again to copy the transcript. Drag to move; right-click to hide.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(8)
+            }
+
             GroupBox("Status Indicator & Modes") {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
