@@ -36,6 +36,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onClick: { [weak self] in self?.toggleButtonRecording() },
             onOpenSettings: { [weak self] in self?.showSettingsWindow() }
         )
+        appState.$showFloatingButton
+            .dropFirst()
+            .filter { !$0 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self, self.appState.mode == .listening, self.appState.recordingOrigin == .button else { return }
+                hdLog("Floating button hidden during a button recording — finalizing")
+                self.finalizeDictation()
+            }
+            .store(in: &cancellables)
         refinePreviewController = RefinePreviewController()
         setupDictationPipeline()
 
@@ -566,7 +576,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let minBytes = 16000 * 2 / 4
         guard audioData.count > minBytes else {
             appState.errorLog.log("Recording too short", detail: "\(audioData.count) bytes", level: .warning)
-            showTemporaryError("Recording too short. Hold the key longer while speaking.")
+            showTemporaryError(origin == .button ? "Recording too short. Click, speak, then click again." : "Recording too short. Hold the key longer while speaking.")
             return
         }
 
