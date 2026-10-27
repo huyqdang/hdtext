@@ -67,4 +67,11 @@ final class TextInsertionServiceTests: XCTestCase {
         XCTAssertTrue(TextInsertionService.restore(snapshotB, to: pasteboard, ifChangeCountIs: ourB))
         XCTAssertEqual(pasteboard.string(forType: .string), "original")
     }
+
+    func testCopyToClipboardLeavesTextOnPasteboard() {
+        pasteboard.clearContents()
+        pasteboard.setString("old", forType: .string)
+        TextInsertionService(pasteboard: pasteboard).copyToClipboard("Hello from the button")
+        XCTAssertEqual(pasteboard.string(forType: .string), "Hello from the button")
+    }
 }

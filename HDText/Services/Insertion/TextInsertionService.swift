@@ -75,6 +75,12 @@ final class TextInsertionService {
         }
     }
 
+    /// Leaves `text` on the clipboard for the user to paste (no restore).
+    func copyToClipboard(_ text: String) {
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
+
     /// The user's real clipboard: the pending original if the pasteboard still holds our own write, else a fresh capture.
     static func captureOriginal(_ pasteboard: NSPasteboard) -> PasteboardSnapshot {
         if let pending = pendingOriginal, pending.pasteboardName == pasteboard.name {

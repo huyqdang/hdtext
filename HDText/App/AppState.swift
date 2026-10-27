@@ -8,9 +8,15 @@ enum AppMode: String, Equatable {
     case error
 }
 
+enum RecordingOrigin: Equatable { case hotkey, button }
+
 @MainActor
 final class AppState: ObservableObject {
-    @Published var mode: AppMode = .idle
+    @Published var mode: AppMode = .idle {
+        didSet { if mode != .listening { recordingOrigin = nil } }
+    }
+    @Published var recordingOrigin: RecordingOrigin?
+    @Published var lastCopiedAt: Date?
     @Published var isLockMode: Bool = false
     @Published var roughTranscript: String = ""
     @Published var cleanedText: String = ""
@@ -42,6 +48,10 @@ final class AppState: ObservableObject {
 
     @Published var smartCorrectionEnabled: Bool {
         didSet { UserDefaults.standard.set(smartCorrectionEnabled, forKey: "smartCorrectionEnabled") }
+    }
+
+    @Published var showFloatingButton: Bool {
+        didSet { UserDefaults.standard.set(showFloatingButton, forKey: "showFloatingButton") }
     }
 
     @Published var overlayX: Double {
@@ -89,6 +99,7 @@ final class AppState: ObservableObject {
             id: UserDefaults.standard.string(forKey: "selectedRewriteModelID"),
             fallback: GeminiModelCatalog.defaultTextID)
         self.smartCorrectionEnabled = UserDefaults.standard.object(forKey: "smartCorrectionEnabled") as? Bool ?? true
+        self.showFloatingButton = UserDefaults.standard.object(forKey: "showFloatingButton") as? Bool ?? true
         self.overlayX = UserDefaults.standard.object(forKey: "overlayX") as? Double ?? -1
         self.overlayY = UserDefaults.standard.object(forKey: "overlayY") as? Double ?? -1
 
